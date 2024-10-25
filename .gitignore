@@ -1,0 +1,8 @@
+#ignored files
+.DS_Store
+.Rhistory
+.DS_Store.orig
+.Rapp.history
+.liner
+# large files
+all_LRiso.gff
