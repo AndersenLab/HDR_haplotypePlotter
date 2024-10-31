@@ -6,7 +6,8 @@ library(readr)
 library(cowplot)
 library(ape)
 
-setwd("/vast/eande106/projects/Nicolas/github/HDR_haplotypePlotter/")
+# Set working directory
+setwd(glue::glue("{dirname(rstudioapi::getActiveDocumentContext()$path)}/.."))
 
 #read collapsed reference HDRs
 collapsed_ff <- readr::read_tsv("./input/HDR_5kbclust_collapsed_wFreq.tsv")
@@ -29,9 +30,12 @@ strainCol <- colnames(orthos)
 #set your target HDR coordinates
 #SEA-1 from Lee et al. 2021 is currently displayed
 #these could be arguments in the future
-hap_chrom = "II"
-hap_start = 3667179
-hap_end = 3701405
+#hap_chrom = "II"
+#hap_start = 3667179
+#hap_end = 3701405
+hap_chrom = "V"
+hap_start = 3922109-500000
+hap_end = 4006237+500000
 
 #some other examples that were tried below
 # 6 HAPLOT
@@ -307,7 +311,6 @@ hd_collapse <- collapsed_ff %>%
   dplyr::mutate(STRAIN="N2")
 
 
-
 ########################### PLOT ALL POSSIBLE HAP ##############################
 
 #gene positions
@@ -343,6 +346,11 @@ allhap<- ggplot() +
   theme(strip.text = element_blank(),axis.text = element_blank(),axis.ticks = element_blank(),axis.title = element_blank()) +
   scale_color_manual(values = c('non-ortho'='darkgrey')) 
 allhap
+
+# tweak beacuse CB4856 is not playing nice.
+allhap + theme(legend.position = "none")
+# export plot
+ggsave(allhap, file = "figs/V_qtl.png", width = 30, height = 30)
 ########################### NEW 6HAP LOCUS ##############################
 # 
 #   
