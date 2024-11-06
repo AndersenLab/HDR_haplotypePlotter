@@ -5,8 +5,9 @@ library(ggplot2)
 library(readr)
 library(cowplot)
 library(ape)
+library(runner)
 
-setwd("/vast/eande106/projects/Nicolas/github/HDR_haplotypePlotter/")
+setwd("/vast/eande106/projects/Lance/THESIS_WORK/glc1_asm_geneModel/HDR_haplotypePlotter")
 
 #read collapsed reference HDRs
 collapsed_ff <- readr::read_tsv("./input/HDR_5kbclust_collapsed_wFreq.tsv")
@@ -28,10 +29,21 @@ strainCol <- colnames(orthos)
 
 #set your target HDR coordinates
 #SEA-1 from Lee et al. 2021 is currently displayed
-#these could be arguments in the future
-hap_chrom = "II"
-hap_start = 3667179
-hap_end = 3701405
+# #these could be arguments in the future
+# hap_chrom = "II"
+# hap_start = 3667179
+# hap_end = 3701405
+
+#GLC-1
+hdr_chrom = "V"
+hdr_start_pos = 16172000
+hdr_end_pos = 16457000
+
+#offset lets you explore adjacent (non-HDR sequences) - set to 0 if not needed
+offset = 20000
+hap_chrom = hdr_chrom
+hap_start = hdr_start_pos - offset
+hap_end = hdr_end_pos + offset
 
 #some other examples that were tried below
 # 6 HAPLOT
@@ -228,10 +240,26 @@ orthoPairs_wcoord_trimmer <- all_ortho_pairs %>%
   #dplyr::rename(start=newStart,end=newEnd) %>%
   dplyr::ungroup() %>%
   dplyr::arrange(seqid,newStart) %>%
+  dplyr::filter(!(is.na(STRAIN))) %>%
   dplyr::group_by(STRAIN) %>%
   dplyr::mutate(leadDist=abs(newEnd-lead(newStart))) %>%
-  dplyr::mutate(trm=ifelse(leadDist>5e4 | lead(leadDist) >5e4,"R","NR")) %>% #this is the problematic line
-  dplyr::filter(is.na(trm) | trm=="NR")
+  dplyr::mutate(trm=ifelse(leadDist>5e4,"S",NA)) %>%
+  #dplyr::mutate(allPass=ifelse(any(trm=="S"),"FIX","KEEP")) %>%
+  dplyr::mutate(check=ifelse(!(is.na(trm)),row_number(),NA)) %>%
+  dplyr::mutate(fill=ifelse(STRAIN=="N2",0, check)) %>%
+  tidyr::fill(fill,.direction = 'up' ) %>%
+  dplyr::ungroup() %>%
+  dplyr::group_by(STRAIN,fill) %>%
+  dplyr::mutate(gsize_filt=n()) %>%
+  dplyr::ungroup() %>%
+  dplyr::group_by(STRAIN) %>%
+  dplyr::mutate(filt=ifelse(gsize_filt==max(gsize_filt),F,T)) %>%
+  dplyr::ungroup() %>%
+  dplyr::filter(filt==F)
+  
+  
+  #dplyr::mutate(fill=ifelse(STRAIN=="N2",0,fill_run(check, run_for_first = T)))#this is the problematic line
+  # dplyr::filter(is.na(trm) | trm=="NR")
 
 #pull the boundaries of the ortholgous genes
 pullBound <- orthoPairs_wcoord_trimmer %>%
@@ -257,7 +285,7 @@ boundGenes <- gffCat %>%
 
 
 #bind ortholgous and non orthologous genes for each strain, and transform the coordinates of genes to a midle axis center
-plotCoords <- rbind(boundGenes,orthoPairs_wcoord %>% dplyr::select(seqid,start,end,geneid,N2)) %>%
+plotCoords <- rbind(boundGenes,orthoPairs_wcoord_trimmer %>% dplyr::select(seqid,start,end,geneid,N2)) %>%
   dplyr::mutate(ortho_status=ifelse(N2=='non-ortho',F,T)) %>%
   dplyr::left_join(hap_coords %>%
                      dplyr::select(HIFI,inv) %>%
@@ -317,7 +345,8 @@ plotCoords2 <- rbind(N2ad,plotCoords) %>%
   dplyr::ungroup() %>%
   dplyr::mutate(midpoint=(minStart+maxEnd)/2) %>%
   dplyr::mutate(centeredStart=newstart-midpoint,centeredEnd=newend-midpoint) %>%
-  dplyr::filter(!is.na(seqid))
+  dplyr::filter(!is.na(seqid)) %>%
+  dplyr::left_join(aliases,by=c("N2"="seqname"))
 
 #center line positions
 hlines <- plotCoords2 %>%
@@ -332,16 +361,27 @@ labs <- plotCoords2 %>%
   dplyr::select(STRAIN,labStart,seqid) %>%
   dplyr::distinct(seqid,.keep_all = T) 
 
+regDef_WI <- plotCoords2 %>%
+  #dplyr::filter((!STRAIN=="N2") & (N2=="N2.F19B10.9" | N2=="N2.F40H7.5")) %>%
+  dplyr::group_by(STRAIN) %>%
+  dplyr::mutate(regStart=min(centeredStart)+offset,regEnd=max(centeredEnd)-offset) %>%
+  dplyr::ungroup() %>%
+  dplyr::distinct(STRAIN,.keep_all = T) %>%
+  dplyr::select(STRAIN,regStart,regEnd)
+
 #plot
 allhap<- ggplot() +
+  geom_rect(data=regDef_WI,aes(xmin=regStart,xmax=regEnd,ymin=1-0.5,ymax=1+0.5),fill='lightblue')+
   geom_segment(data=hlines,aes(x=hlineStart,xend=hlineEnd,y=1,yend=1)) +
-  geom_rect(data=plotCoords2 %>% dplyr::filter(ortho_status==T),aes(xmin=centeredStart,xmax=centeredEnd,ymin=1-0.5,ymax=1+0.5,fill=N2,color="black")) +
+  geom_rect(data=plotCoords2 %>% dplyr::filter(ortho_status==T),aes(xmin=centeredStart,xmax=centeredEnd,ymin=1-0.5,ymax=1+0.5,fill=locus_name),color="black") +
   geom_rect(data=plotCoords2 %>% dplyr::filter(ortho_status==F),aes(xmin=centeredStart,xmax=centeredEnd,ymin=1-0.5,ymax=1+0.5,color='non-ortho')) +
   geom_text(data=labs,aes(x=labStart,y=1,label=STRAIN)) +
   #facet_wrap(~factor(STRAIN, levels=c('N2','NIC2','ECA36','ECA396', 'MY2693', 'EG4725','JU2600','JU310','MY2147','JU1400','NIC526','JU2526','QX1794','CB4856','XZ1516','DL238')),ncol=1) +
   facet_wrap(~factor(STRAIN, levels=c('N2','NIC2','ECA36' ,'DL238',"CB4856",'EG4725','MY2147','NIC526','JU2600','JU310','JU1400','XZ1516','JU2526',"QX1794","MY2693","ECA396")),ncol=1) +
   theme(strip.text = element_blank(),axis.text = element_blank(),axis.ticks = element_blank(),axis.title = element_blank()) +
-  scale_color_manual(values = c('non-ortho'='darkgrey')) 
+  scale_color_manual(values = c('non-ortho'='darkgrey')) +
+  guides(fill = guide_legend(override.aes = list(size = 0.5))) +
+  labs(fill='Locus name') 
 allhap
 ########################### NEW 6HAP LOCUS ##############################
 # 
@@ -388,6 +428,9 @@ allhap
 #here I have previous knowledge of the haplotype strycture of this region
 #I've collapsed the plot to the coordinates of the three core haplotypes
 
+#you can select a few strains to filter for
+strainSet <- c("N2","ECA36","NIC2","JU2526","ECA396")
+
 plotCoords4 <- rbind(N2ad,plotCoords) %>%
   dplyr::group_by(STRAIN) %>%
   dplyr::mutate(minStart=min(newstart),maxEnd=max(newend)) %>%
@@ -395,7 +438,7 @@ plotCoords4 <- rbind(N2ad,plotCoords) %>%
   dplyr::mutate(midpoint=(minStart+maxEnd)/2) %>%
   dplyr::mutate(centeredStart=newstart-midpoint,centeredEnd=newend-midpoint) %>%
   dplyr::filter(!is.na(seqid)) %>%
-  dplyr::filter(STRAIN =="N2" | STRAIN == "CB4856" | STRAIN=="DL238") %>%
+  dplyr::filter(STRAIN %in% strainSet) %>%
   dplyr::left_join(aliases,by=c("N2"="seqname"))
 
 midpoints <- plotCoords4 %>% 
@@ -425,23 +468,24 @@ labs <- plotCoords4 %>%
 #   dplyr::left_join(test,by="STRAIN")
 
 regDef_WI <- plotCoords4 %>%
-  dplyr::filter((!STRAIN=="N2") & (N2=="N2.F19B10.9" | N2=="N2.F40H7.5")) %>%
+  #dplyr::filter((!STRAIN=="N2") & (N2=="N2.F19B10.9" | N2=="N2.F40H7.5")) %>%
   dplyr::group_by(STRAIN) %>%
-  dplyr::mutate(regStart=min(centeredStart),regEnd=max(centeredEnd)) %>%
+  dplyr::mutate(regStart=min(centeredStart)+offset,regEnd=max(centeredEnd)-offset) %>%
   dplyr::ungroup() %>%
   dplyr::distinct(STRAIN,.keep_all = T) %>%
   dplyr::select(STRAIN,regStart,regEnd)
 
 hap3 <- ggplot() +
   geom_rect(data=hd_collapse,aes(xmin=minStart-as.numeric(midpoints[1,2]),xmax=maxEnd-as.numeric(midpoints[1,2]),ymin=1-0.5,ymax=1+0.5),fill='lightgrey')+
-  geom_rect(data=regDef_WI,aes(xmin=regStart,xmax=regEnd,ymin=1-0.5,ymax=1+0.5),fill='lightgrey')+
+  geom_rect(data=regDef_WI,aes(xmin=regStart,xmax=regEnd,ymin=1-0.5,ymax=1+0.5),fill='lightblue')+
   geom_segment(data=hlines,aes(x=hlineStart,xend=hlineEnd,y=1,yend=1)) +
   geom_rect(data=plotCoords4 %>% dplyr::filter(ortho_status==T),aes(xmin=centeredStart,xmax=centeredEnd,ymin=1-0.5,ymax=1+0.5,fill=locus_name),color="black") +
   geom_rect(data=plotCoords4 %>% dplyr::filter(ortho_status==F),aes(xmin=centeredStart,xmax=centeredEnd,ymin=1-0.5,ymax=1+0.5),fill='darkgrey',color="black") +
   #geom_text(data=labs %>% dplyr::filter(!STRAIN=="CB4856"),aes(x=labStart-2000,y=1,label=newLab),size=2.2,hjust=0.5,fontface='bold') +
   #geom_text(data=labs %>% dplyr::filter(STRAIN=="CB4856"),aes(x=labStart+3000,y=1,label=newLab),size=2.2,hjust=1,fontface='bold') +
   #geom_text(data=labs %>% dplyr::filter(STRAIN=="CB4856"),aes(x=labStart-2500,y=1,label=newLab2),size=2.2,hjust=1,fontface='bold') +
-  facet_wrap(~factor(STRAIN, levels=c('N2','CB4856','XZ1516','DL238','QX1794','MY2693')),ncol=1) +
+  geom_text(data=labs,aes(x=labStart,y=1,label=STRAIN)) +
+  facet_wrap(~factor(STRAIN, levels=strainSet),ncol=1) +
   theme(strip.text = element_blank(),
         axis.text = element_blank(),
         axis.ticks = element_blank(),
