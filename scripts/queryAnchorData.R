@@ -8,70 +8,24 @@ library(ape)
 library(data.table)
 library(stringr)
 
-##### NOTES #####
-#This script seeks to visualize structurally complex HDRs. This is not a fully automated process and requires attention.
-#Some genomes will display unique structural differences that lack reliable anchors of homologous sequences that map adjacent to a selected reference genomic region.
-#In result, each region can require manual tweaks to the selected reference boudaries in order to find the homologous anchors.
-#Additionally, to ensure we are not artificially assembling a haplotype using contigs mapped from different chromosomes, we can only confidently visualize regions that 
-#are encompassed by a single contig mapping between the reference and wild strain genomes.
-#Since strain de-novo genome assemblies vary in contiguity and completeness, some genomes must be manually dropped to avoid visualizing an incomplete or fragmented haplotype.
-#Lines of code preceded with "MODIFY THIS" allow you explore regions adjacent to the initially selected reference genomic region 
-#or select the strains that will be displayed when genome mapping issues are identified in the initial diagnostic plots.
-#################
+#### This script holds downstream steps of findMappableAnchors.R
+#### Once the anchor finding is re-worked, we will adjust the logic for querying a region of interest from the anchor data.
 
-#read all pairwise genome coordinate comparisons
-transformed_coords <- readr::read_tsv("../working_data/CBCN_nucmer_db_20250603.tsv",col_names = F) 
-colnames(transformed_coords) <- c("S1","E1","S2","E2","L1","L2","IDY","LENR","LENQ","REF","HIFI","STRAIN")
-transformed_coords <- transformed_coords %>% dplyr::filter(!STRAIN=="AF16" & !STRAIN=="JU1422")
-
-#read concatentated gene models of every genome (L3 features are removed)
-gffCat <- readr::read_tsv("../working_data/CBCN_L1L2_master.tsv", col_names = F)
-colnames(gffCat) <- c("seqid","source","type","start","end","score","strand","phase","attributes","STRAIN")
-gffCat <- gffCat %>% dplyr::filter(!STRAIN=="AF16.WBPS19" & !STRAIN=="JU1422.WBPS19") %>% dplyr::mutate(STRAIN=ifelse(STRAIN=="QX1410.curated","QX1410",STRAIN))
-
-#read ortholog relationships among gene models
-orthos <- readr::read_tsv("../working_data/CBCN_orthogroups.tsv") %>% dplyr::rename(QX1410=QX1410.curated.longest.protein)
-strainCol <- colnames(orthos)
-strainCol_c1 <- gsub(".braker.longest.protein","",strainCol)
-strainCol_c2 <- gsub(".longest.protein","",strainCol_c1)
-colnames(orthos) <- strainCol_c2
-orthos <- orthos %>% dplyr::select(-AF16.WBPS19,-JU1422.WBPS19) #other reference genomes (AF16, C. briggsae; JU1422, C. nigoni) can be included by dropping this line
-#orthos <- orthos %>%dplyr::select(Orthogroup,CB4856,N2)
-#strainCol_c2 <-colnames(orthos)
-
-#list of nigoni strains included in orthofinder
-#mainly included for exploratory purposes, they are later omitted from the plots due to lack of homology in chromosomal arms between both C.b. and C.n.
-nigonis <- c("JU1422","ECA2852","ECA2857","EG5268","JU1418","JU2617","JU1419","JU2484","JU4356","NIC2143","NIC2150","NIC2152","VSL2202","VX153","YR106","ZF1220")
-#refs <- c("MY681","JU3207","JU2536")
-
-######### MODIFY THIS ##########
 #set your target HDR coordinates
-# Figure S17a - 70 kb
-hdr_chrom = "V"
-hdr_start_pos = 838000
-hdr_end_pos = 894000
-
-#Figure S17b - 110kb
+#e.g.:
 # hdr_chrom = "II"
-# hdr_start_pos = 12500000
-# hdr_end_pos = 12610000
+# hdr_start_pos = 12920000
+# hdr_end_pos = 13020000
 
-#Figure S17c - 175kb
-# hdr_chrom = "I"
-# hdr_start_pos = 12469000
-# hdr_end_pos = 12644000
-
-#Figure S16 - 120 kb
-# hdr_chrom = "I"
-# hdr_start_pos = 11880000
-# hdr_end_pos = 12000000
+hdr_chrom = "I"
+hdr_start_pos = 11880000
+hdr_end_pos = 12000000
 
 #offset lets you explore adjacent regions
 offset = 0
 hap_chrom = hdr_chrom
 hap_start = hdr_start_pos - offset
 hap_end = hdr_end_pos + offset 
-############################### 
 
 #use reference coordinates from g2g alginments to pull the contigs that contain the alt haplotypes for the HDR
 hap_coords <- transformed_coords %>%
@@ -80,8 +34,8 @@ hap_coords <- transformed_coords %>%
                   (REF == hap_chrom & S1 >= hap_start & E1 <= hap_end)) %>%
   dplyr::mutate(inv=ifelse(S2>E2,T,F))  %>%
   dplyr::mutate(St2=ifelse(inv==T,E2,S2),Et2=ifelse(inv==T,S2,E2))
-  # dplyr::select(-S2,-E2) %>%
-  # dplyr::rename(S2=newS2,E2=newE2)
+# dplyr::select(-S2,-E2) %>%
+# dplyr::rename(S2=newS2,E2=newE2)
 
 # naive visualization of g2g alignments for the target region
 # multiple contigs can map to the REF region, we need to filter those secondary alignments!
@@ -125,7 +79,7 @@ ggplot(tigFilt) +
   theme(panel.background = element_blank(),
         panel.border = element_rect(fill=NA),
         legend.position = 'none') #+
-  #scale_fill_manual(values=c("lightgrey"="lightgrey","glc-1"="pink"))
+#scale_fill_manual(values=c("lightgrey"="lightgrey","glc-1"="pink"))
 
 #keep the set of alignments with the largest span (i.e. removes small distant alignments)
 tigFilt2 <- tigFilt %>%
@@ -202,7 +156,7 @@ wild_genes <- gffCat %>%
   dplyr::mutate(attributes=gsub("ID=","",attributes)) %>%
   dplyr::select(attributes,seqid,start,end,strand,STRAIN) %>%
   dplyr::rename(Name=attributes)
-  
+
 wild_tran <-  gffCat  %>%
   dplyr::filter(type=="mRNA" & !(STRAIN=="QX1410")) %>%
   tidyr::separate(attributes,into=c("tranname","Parent"),sep=";Parent=") %>%
@@ -211,7 +165,7 @@ wild_tran <-  gffCat  %>%
   dplyr::select(tranname,Parent,STRAIN) %>%
   dplyr::left_join(wild_genes,by=c("Parent"="Name","STRAIN")) %>%
   dplyr::left_join(HV_boundary,by="STRAIN")
-  
+
 #extract the REF genes 
 QXStart = min(HV_boundary$refStart)
 QXEnd = max(HV_boundary$refEnd)
@@ -312,10 +266,10 @@ for (i in 1:length(strainCol_iter)) {
     dplyr::mutate(STRAIN=strainCol_iter[i]) %>%
     dplyr::mutate(has_any_ortho=T) %>%
     dplyr::left_join(wild_tran,by=c("STRAIN","str"="tranname"))
-    #dplyr::select(-QX1410)
+  #dplyr::select(-QX1410)
   
   orthoList_raw[[i]] <- raw_tmp
-    
+  
   print(paste0("Mapped orthologs for ",i,"/",length(strainCol_iter)," strains."))
   tmp <- rbind(inreg_orthos %>% dplyr::mutate(status="within") %>% dplyr::select(Orthogroup,strainCol_iter[i],QX1410,seqid,seqname,start,end,og_loc,status),outreg_orthos %>% 
                  dplyr::select(Orthogroup,strainCol_iter[i],QX1410,seqid,seqname,start,end,og_loc,status)) %>%
@@ -330,18 +284,18 @@ for (i in 1:length(strainCol_iter)) {
     dplyr::select(Orthogroup,newSel,Name,STRAIN,QX1410,-tnum,og_loc,status) %>%
     dplyr::rename(tranname=newSel,Parent=Name) %>%
     dplyr::left_join(wild_tran,by=c("tranname","Parent","STRAIN")) 
-
+  
   orthoList[[i]] <- tmp
   boundg <- tmp %>% 
-                            dplyr::filter(og_loc=="in_region" | status=="out_expand") %>%
-                            dplyr::select(-og_loc,-status) %>%
-                            dplyr::filter(seqid==boundChrom) %>%
-                            dplyr::mutate(og_loc=ifelse(((start >= boundStart & start <= boundEnd) | (end >= boundStart & end <= boundEnd)),"in_region","out_region")) %>%
-                            dplyr::mutate(start_dist=ifelse(og_loc=="out_region",abs(boundStart-end),NA),end_dist=ifelse(og_loc=="out_region",abs(start-boundEnd),NA)) %>%
-                            dplyr::rowwise() %>%
-                            dplyr::mutate(min_dist_bases=min(start_dist,end_dist)) %>%
-                            dplyr::ungroup() %>%
-                            dplyr::mutate(status=ifelse(og_loc=="in_region","within",ifelse(min_dist_bases < 10000 & !is.na(min_dist_bases),"out_expand","outside")))
+    dplyr::filter(og_loc=="in_region" | status=="out_expand") %>%
+    dplyr::select(-og_loc,-status) %>%
+    dplyr::filter(seqid==boundChrom) %>%
+    dplyr::mutate(og_loc=ifelse(((start >= boundStart & start <= boundEnd) | (end >= boundStart & end <= boundEnd)),"in_region","out_region")) %>%
+    dplyr::mutate(start_dist=ifelse(og_loc=="out_region",abs(boundStart-end),NA),end_dist=ifelse(og_loc=="out_region",abs(start-boundEnd),NA)) %>%
+    dplyr::rowwise() %>%
+    dplyr::mutate(min_dist_bases=min(start_dist,end_dist)) %>%
+    dplyr::ungroup() %>%
+    dplyr::mutate(status=ifelse(og_loc=="in_region","within",ifelse(min_dist_bases < 10000 & !is.na(min_dist_bases),"out_expand","outside")))
   check <- boundg %>% dplyr::filter(status=="out_expand")
   
   if (nrow(check) > 0) {
@@ -365,7 +319,7 @@ for (i in 1:length(strainCol_iter)) {
         dplyr::mutate(QX1410 = strsplit(as.character(QX1410), ",")) %>%
         tidyr::unnest(QX1410) %>%
         dplyr::mutate(QX1410=trimws(QX1410))
-        
+      
       boundg_inc <- rbind(extension, boundg %>% dplyr::select(-start_dist,-end_dist,-min_dist_bases))
       orthoList_bound[[i]]  <- boundg_inc %>% dplyr::arrange(start)
     } 
@@ -390,9 +344,9 @@ for (i in 1:length(strainCol_iter)) {
     
     
   } else {
-   orthoList_bound[[i]] <- boundg %>% 
-     dplyr::select(-start_dist,-end_dist,-min_dist_bases) %>% dplyr::arrange(start)
- }
+    orthoList_bound[[i]] <- boundg %>% 
+      dplyr::select(-start_dist,-end_dist,-min_dist_bases) %>% dplyr::arrange(start)
+  }
 }
 
 all_ortho_pairs  <- ldply(orthoList,data.frame) 
@@ -434,9 +388,9 @@ new_boundaries_WI <-  all_ortho_pairs_bound %>%
   dplyr::select(seqid,minStart,maxEnd,STRAIN,gene2gene)
 
 QX_expand <- rbind(inreg_orthos %>% 
-                       dplyr::mutate(status="within"),outreg_orthos %>% 
-                       dplyr::select(-refStart,-refEnd,-refChrom,-start_dist,-end_dist,-min_dist_bases,-updown)) %>%
-                       #dplyr::select(Orthogroup,strainCol_iter[i],QX,seqid,seqname,start,end,og_loc,status)) %>%
+                     dplyr::mutate(status="within"),outreg_orthos %>% 
+                     dplyr::select(-refStart,-refEnd,-refChrom,-start_dist,-end_dist,-min_dist_bases,-updown)) %>%
+  #dplyr::select(Orthogroup,strainCol_iter[i],QX,seqid,seqname,start,end,og_loc,status)) %>%
   dplyr::filter(!status=="outside")
 
 new_boundaries_QX <- QX_expand %>%
@@ -521,7 +475,7 @@ WI_ad <- boundGenes %>%
   dplyr::group_by(STRAIN) %>%
   dplyr::arrange(first_gene, desc(n_gene), .by_group = TRUE) %>% 
   dplyr::mutate(order_gene = dplyr::first(first_gene),
-         order_num = dplyr::first(n_gene)) %>% 
+                order_num = dplyr::first(n_gene)) %>% 
   dplyr::ungroup() %>%
   dplyr::mutate(STRAIN = factor(STRAIN, levels = rev(desired_strains))) %>% #can be commented out if no order is desired
   dplyr::arrange(STRAIN, order_gene, order_num) %>%
@@ -579,7 +533,7 @@ segments <- all_ortho_pairs_bound %>%
   dplyr::mutate(n2=n()) %>%
   dplyr::ungroup() %>%
   dplyr::mutate(col=ifelse(n1>1 | n2>1,"multi_copy","single_copy")) #%>%
-  #dplyr::mutate(QX_y_pos=ifelse(strand_QX=="+",QX_y_pos,QX_y_pos-0.4),WI_y_pos=ifelse(strand=="+",WI_y_pos,WI_y_pos-0.4))
+#dplyr::mutate(QX_y_pos=ifelse(strand_QX=="+",QX_y_pos,QX_y_pos-0.4),WI_y_pos=ifelse(strand=="+",WI_y_pos,WI_y_pos-0.4))
 
 plot_ad <- all_ad %>%
   dplyr::group_by(STRAIN,Parent) %>%
