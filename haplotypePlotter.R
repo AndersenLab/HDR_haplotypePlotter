@@ -5,27 +5,40 @@ library(ggplot2)
 library(readr)
 library(cowplot)
 library(ape)
-library(runner)
+library(data.table)
+library(stringr)
 
-setwd("/vast/eande106/projects/Lance/THESIS_WORK/glc1_asm_geneModel/HDR_haplotypePlotter")
+#setwd("/vast/eande106/projects/Lance/THESIS_WORK/gene_annotation/glc1_variation/HDR_haplotypePlotter")
 
 #read collapsed reference HDRs
-collapsed_ff <- readr::read_tsv("./input/HDR_5kbclust_collapsed_wFreq.tsv")
+collapsed_ff <- readr::read_tsv("/vast/eande106/projects/Nicolas/hyperdivergent_regions/elegans/HDR_5kbclust_collapsed.tsv")
 
 #read strain-specific HDRs
-all_SR_calls <- readr::read_tsv("./input/HDR_allStrain_5kbclust_1IBfilt.tsv")
+all_SR_calls <- readr::read_tsv("/vast/eande106/projects/Nicolas/hyperdivergent_regions/elegans/HDR_allStrain_5kbclust_1IBfilt.tsv")
 #all_LR_calls <- readr::read_tsv("/projects/b1059/projects/Nicolas/hyperdivergent_regions/elegans/HDR_LRcalls_95idy.tsv")
 
 #read all pairwise genome coordinate comparisons
-transformed_coords <- readr::read_tsv("./input/all_hifi_nucmer_CE.coords",col_names = F) 
+transformed_coords <- readr::read_tsv("/vast/eande106/projects/Nicolas/c.elegans/reference_genealn/N2vCB/N2_hifi_transformed2.tsv",col_names = F) %>% dplyr::mutate(STRAIN="CB4856")
+#transformed_coords <- readr::read_tsv("/vast/eande106/projects/Lance/THESIS_WORK/gene_annotation/raw_data/asssemblies/nucmer_runs/all_WI_transformed.tsv",col_names = F) 
 colnames(transformed_coords) <- c("S1","E1","S2","E2","L1","L2","IDY","LENR","LENQ","REF","HIFI","STRAIN")
 
 #read concatentated gene models of every genome
-gffCat <- ape::read.gff("./input/all_LRiso.gff")
+gffCat1 <- ape::read.gff("/vast/eande106/projects/Nicolas/WI_PacBio_genomes/annotation/elegans/braker_runs/gff/CB4856.braker.gff3") %>% dplyr::mutate(STRAIN="CB4856")
+#gffCat1 <- readr::read_tsv("/vast/eande106/projects/Nicolas/WI_PacBio_genomes/annotation/elegans/braker_runs/merged_gff/all_WI_braker.clean.gff", col_names = F)
+#colnames(gffCat1) <- c("seqid","source","type","start","end","score","strand","phase","attributes","STRAIN")
+gffCat2 <- ape::read.gff("/vast/eande106/projects/Nicolas/c.elegans/N2/wormbase/WS283/N2.WBonly.WS283.PConly.gff3") %>% dplyr::mutate(STRAIN="N2")
+gffCat <- rbind(gffCat1,gffCat2)
 
 #read ortholog relationships among gene models
-orthos <- readr::read_tsv("./input/Orthogroups.tsv")
+#orthos <- readr::read_tsv("./input/Orthogroups.tsv")
+orthos <- readr::read_tsv("/vast/eande106/projects/Nicolas/WI_PacBio_genomes/orthology/elegans/N2xCB/OrthoFinder/Results_Mar17/Orthogroups/Orthogroups.tsv")
+#orthos <- readr::read_tsv("/vast/eande106/projects/Nicolas/WI_PacBio_genomes/orthology/elegans/prot/OrthoFinder/Results_Mar20/Orthogroups/Orthogroups.tsv")
 strainCol <- colnames(orthos)
+strainCol_c1 <- gsub(".braker.protein","",strainCol)
+strainCol_c2 <- gsub("_WS283.protein","",strainCol_c1)
+colnames(orthos) <- strainCol_c2
+#orthos <- orthos %>%dplyr::select(Orthogroup,CB4856,N2)
+#strainCol_c2 <-colnames(orthos)
 
 #set your target HDR coordinates
 #SEA-1 from Lee et al. 2021 is currently displayed
@@ -35,26 +48,16 @@ strainCol <- colnames(orthos)
 # hap_end = 3701405
 
 #GLC-1
-hdr_chrom = "V"
-hdr_start_pos = 16172000
-hdr_end_pos = 16457000
+hdr_chrom = "II"
+hdr_start_pos = 2365967
+hdr_end_pos = 2669007
 
 #offset lets you explore adjacent (non-HDR sequences) - set to 0 if not needed
-offset = 20000
+offset = 0
 hap_chrom = hdr_chrom
 hap_start = hdr_start_pos - offset
 hap_end = hdr_end_pos + offset
 
-#some other examples that were tried below
-# 6 HAPLOT
-# hap_chrom = "II"
-# hap_start = 3271510
-# hap_end = 3415738
-
-# 7 HAPLOT
-# hap_chrom = "V"      
-# hap_start = 20193463
-# hap_end = 20267244 
 
 #use reference coordinates from g2g alginments to pull the contigs that contain the alt haplotypes for the HDR
 hap_coords <- transformed_coords %>%
@@ -94,422 +97,544 @@ tigFilt <- hap_coords %>%
 #have in mind that the alignments look fragmented because of sequence divergence, but the contig is linear in the genome file
 ggplot(tigFilt) +
   geom_rect(xmin=hap_start/1e6,xmax=hap_end/1e6,ymin=-Inf,ymax=Inf,fill="lightgrey")+
+  #geom_rect(xmin=16219634/1e6,xmax=16221917/1e6,ymin=-Inf,ymax=Inf,aes(fill="glc-1")) +
   geom_segment(aes(x=S1/1e6,xend=E1/1e6,y=S2/1e6,yend=E2/1e6,color=HIFI)) +
   facet_wrap(~STRAIN,scales = 'free') +
-  xlab("REF genome position (Mb)") +
+  xlab("N2 genome position (Mb)") +
   ylab("WILD contig position (Mb)") +
   theme(panel.background = element_blank(),
-        panel.border = element_rect(fill=NA))
+        panel.border = element_rect(fill=NA),
+        legend.position = 'none') #+
+  #scale_fill_manual(values=c("lightgrey"="lightgrey","glc-1"="pink"))
+
+
+tigFilt2 <- tigFilt %>%
+  dplyr::arrange(S2) %>%
+  dplyr::group_by(STRAIN) %>%
+  dplyr::mutate(leadDiff=lead(S2)-E2) %>%
+  dplyr::mutate(lagDiff=E2-lag(S2)) %>%
+  dplyr::mutate(lagDiff=ifelse(is.na(lagDiff),0,lagDiff)) %>%
+  dplyr::mutate(leadDiff=ifelse(is.na(leadDiff),0,leadDiff)) %>%
+  dplyr::mutate(drop=ifelse(lagDiff >1.5e5 & lag(leadDiff) > 1.5e5,T,F)) %>% 
+  dplyr::mutate(droprle=rleid(drop)) %>%
+  dplyr::ungroup() %>%
+  dplyr::group_by(STRAIN,droprle) %>%
+  dplyr::mutate(gsize=n()) %>%
+  dplyr::mutate(len=abs(E2-S2)) %>%
+  dplyr::mutate(sumlen=sum(len)) %>%
+  dplyr::ungroup() %>%
+  dplyr::group_by(STRAIN) %>%
+  dplyr::filter(sumlen==max(sumlen)) %>%
+  dplyr::select(-gsize)
+
+ggplot(tigFilt2) +
+  geom_rect(xmin=hap_start/1e6,xmax=hap_end/1e6,ymin=-Inf,ymax=Inf,fill="lightgrey")+
+  #geom_rect(xmin=16219634/1e6,xmax=16221917/1e6,ymin=-Inf,ymax=Inf,aes(fill="glc-1")) +
+  geom_segment(aes(x=S1/1e6,xend=E1/1e6,y=S2/1e6,yend=E2/1e6,color=HIFI)) +
+  facet_wrap(~STRAIN,scales = 'free') +
+  xlab("N2 genome position (Mb)") +
+  ylab("WILD contig position (Mb)") +
+  theme(panel.background = element_blank(),
+        panel.border = element_rect(fill=NA),
+        legend.position = 'none') 
 
 #get the minimum and maximum boundary of the WILD genome alignments that contain the HDR
-HV_boundary <- tigFilt %>%
-  dplyr::mutate(refStart=min(S1),refEnd=max(E1)) %>%
-  dplyr::group_by(STRAIN) %>%
-  dplyr::mutate(boundStart=min(S2), boundEnd=max(E2)) %>%
+HV_boundary <- tigFilt2 %>%
+  dplyr::select(-lagDiff,-leadDiff,-drop) %>%
+  dplyr::mutate(refStart=min(S1,E1),refEnd=max(S1,E1)) %>%
+  dplyr::mutate(boundStart=min(S2,E2), boundEnd=max(S2,E2)) %>%
   dplyr::distinct(STRAIN, .keep_all = T) %>%
   dplyr::select(HIFI,boundStart,boundEnd,STRAIN,REF,refStart,refEnd) %>%
-  dplyr::ungroup()
+  dplyr::ungroup() %>%
+  dplyr::rename(boundChrom=HIFI)
+
+
+
 
 #filter the concatenated GFF to extract the gene models of each WILD genome contig boundary
-filtGff <- gffCat %>%
-  dplyr::filter(type=="gene") %>%
-  dplyr::filter(seqid %in% HV_boundary$HIFI) %>%
-  dplyr::left_join(HV_boundary,by=c('seqid'='HIFI')) %>%
-  dplyr::filter((start >= boundStart & start <= boundEnd) | 
-                  (end >= boundStart & end <= boundEnd)) %>%
-  dplyr::group_by(STRAIN) %>%
-  dplyr::mutate(ngene=n()) %>%
-  dplyr::arrange(ngene) %>%
-  dplyr::mutate(gid=cur_group_id()) %>%
-  dplyr::ungroup() %>%
-  dplyr::mutate(boundSize=abs(boundStart-boundEnd))
-
+wild_genes <- gffCat %>%
+  dplyr::filter(type=="gene" & !(STRAIN=="N2")) %>%
+  dplyr::mutate(attributes=gsub(";","",attributes)) %>% 
+  dplyr::mutate(attributes=gsub("ID=","",attributes)) %>%
+  dplyr::select(attributes,seqid,start,end,strand,STRAIN) %>%
+  dplyr::rename(Name=attributes)
+  
+wild_tran <-  gffCat  %>%
+  dplyr::filter(type=="mRNA" & !(STRAIN=="N2")) %>%
+  tidyr::separate(attributes,into=c("tranname","Parent"),sep=";Parent=") %>%
+  dplyr::mutate(Parent=gsub(";","",Parent)) %>%
+  dplyr::mutate(tranname=gsub("ID=","",tranname)) %>%
+  dplyr::select(tranname,Parent,STRAIN) %>%
+  dplyr::left_join(wild_genes,by=c("Parent"="Name","STRAIN")) %>%
+  dplyr::left_join(HV_boundary,by="STRAIN")
+  
 #extract the REF genes 
-N2Start = filtGff$refStart[1]
-N2End = filtGff$refEnd[1]
+N2Start = HV_boundary$refStart[1]
+N2End = HV_boundary$refEnd[1]
 N2_genes <- gffCat %>%
-  dplyr::filter(seqid==hap_chrom & type=="gene") %>%
+  dplyr::filter(type=="gene" & STRAIN=="N2") %>%
   dplyr::mutate(refStart=N2Start,refEnd=N2End) %>%
-  dplyr::filter((start >= hap_start & start <= hap_end) | 
-                  (end >= hap_start & end <= hap_end)) %>%
   dplyr::filter(grepl("biotype=protein_coding",attributes)) %>%
   tidyr::separate(attributes,into=c("pre","post"),sep=';sequence_name=') %>%
   tidyr::separate(post,into=c("seqname","post2"),sep=';biotype=') %>%
-  dplyr::mutate(seqname=paste0("N2.",seqname)) %>%
+  #dplyr::mutate(seqname=paste0(seqname)) %>%
   tidyr::separate(pre,into=c("ID","Name","rest2"),sep=";") %>%
-  dplyr::mutate(Name=gsub("Name=","",Name))  
+  dplyr::mutate(Name=gsub("Name=","",Name)) %>% 
+  dplyr::select(seqid,start,end,strand,Name,rest2,seqname,STRAIN,refStart,refEnd,seqname) %>%
+  dplyr::mutate(rest2=ifelse(grepl("locus",rest2),gsub("locus=","",rest2),seqname)) %>%
+  dplyr::rename(alias=rest2)
 
 #extract the REF protein-coding transcripts
 N2_tran <- gffCat %>%
-  dplyr::filter(seqid==hap_chrom & type=="mRNA") %>%
+  dplyr::filter(type=="mRNA" & STRAIN=="N2") %>%
   tidyr::separate(attributes, into=c("ID","Parent","Name","wormpep","locus"),sep=';') %>%
   dplyr::mutate(ID=gsub("ID=Transcript:","",ID)) %>%
   tidyr::separate(ID,into = c("fosmid","tseqID",'tranum'),sep="\\.",remove = F) %>%
-  dplyr::mutate(tseqname=paste0("N2.",fosmid,".",tseqID)) %>%
+  dplyr::mutate(tseqname=paste0(fosmid,".",tseqID,".",tranum)) %>%
   dplyr::mutate(Parent=gsub("Parent=Gene:","",Parent)) %>%
   dplyr::filter(Parent %in% N2_genes$Name) %>%
-  dplyr::select(tseqname,Parent) %>% 
+  dplyr::select(tseqname,Parent) %>%
   dplyr::rename(tranname=tseqname) %>%
+  dplyr::mutate(tranname=paste0("Transcript_",tranname)) %>%
   dplyr::left_join(N2_genes,by=c('Parent'='Name'))
 
-#get gene list
-HV_genelist <- N2_genes$seqname
 
+##
+# dplyr::filter((start >= hap_start & start <= hap_end) | 
+#                 (end >= hap_start & end <= hap_end)) %>%
+##
+N2_tran_reg <- N2_tran %>%
+  dplyr::filter((start >= hap_start & start <= hap_end) | (end >= hap_start & end <= hap_end))  %>%
+  dplyr::filter(seqid==hap_chrom)
+
+
+# #get gene list
+HV_genelist <- N2_tran_reg$tranname 
 #get alt gene names/aliases
-aliases <- N2_genes %>%
-  dplyr::select(seqname,post2) %>%
-  tidyr::separate(post2,into=c("rem","aliases"),sep=";Alias=") %>%
-  dplyr::select(-rem) %>%
-  tidyr::separate(aliases,into=c('locus_name',"alias2"),sep=',') %>%
-  dplyr::select(-alias2)
+aliases <- N2_tran %>% dplyr::select(seqname,tranname,alias)
 
 #minor diagnostic plot to visualize the REF loci captured by the HDR
 #this is your REF haplotype
-ggplot(N2_genes) + geom_rect(aes(xmin=start,xmax=end,ymin=1,ymax=2))
+ggplot(N2_tran_reg) + geom_rect(aes(xmin=start,xmax=end,ymin=1,ymax=2))
 
 
 #filter orthologous groups using REF genes
 #this will establish your orthology relationships between REF and WILD haplotypes
-filtOrthos <- orthos %>%
-  dplyr::filter(grepl(paste(HV_genelist,collapse="|"),N2.c_elegans.PRJNA13758.WS270.protein.fa_longest_isoforms)) %>%
-  dplyr::mutate(N2 = strsplit(as.character(N2.c_elegans.PRJNA13758.WS270.protein.fa_longest_isoforms), ",")) %>%
+
+all_orthos_unnest <- orthos %>%
+  dplyr::mutate(N2 = strsplit(as.character(N2), ",")) %>%
   tidyr::unnest(N2) %>%
   dplyr::mutate(N2=trimws(N2)) %>%
-  dplyr::left_join(N2_tran %>% dplyr::select(tranname,seqid,seqname,start,end),by=c("N2"="tranname")) %>%
-  dplyr::filter(!is.na(seqid))
+  dplyr::mutate(na_count = rowSums(is.na(.))) %>%
+  dplyr::filter(na_count < length(strainCol_c2) - 2) %>%
+  dplyr::left_join(N2_tran %>% dplyr::select(tranname,seqid,seqname,start,end),by=c("N2"="tranname"))  %>%
+  dplyr::select(-na_count)
+
+filtOrthos <- orthos %>%
+  dplyr::filter(grepl(paste(HV_genelist,collapse="|"),N2)) %>%
+  dplyr::mutate(N2 = strsplit(as.character(N2), ",")) %>%
+  tidyr::unnest(N2) %>%
+  dplyr::mutate(N2=trimws(N2)) %>%
+  dplyr::left_join(N2_tran_reg %>% dplyr::select(tranname,seqid,seqname,start,end) %>% dplyr::mutate(og_loc="in_region"),by=c("N2"="tranname")) 
+
+inreg_orthos <- filtOrthos %>% dplyr::filter(!is.na(seqid)) 
+outreg_orthos <- filtOrthos %>% dplyr::filter(is.na(seqid)) %>% 
+  dplyr::select(-seqid,-seqname,-start,-end,-og_loc) %>%
+  dplyr::left_join(N2_tran %>% dplyr::select(tranname,seqid,seqname,start,end,refStart,refEnd) %>% 
+                     dplyr::mutate(refChrom=hap_chrom) %>%
+                     dplyr::mutate(og_loc="out_region"),by=c("N2"="tranname")) %>%
+  dplyr::filter(seqid==refChrom) %>%
+  dplyr::mutate(start_dist=abs(refStart-end),end_dist=abs(start-refEnd)) %>%
+  dplyr::rowwise() %>%
+  dplyr::mutate(min_dist_bases=min(start_dist,end_dist)) %>%
+  dplyr::ungroup() %>% 
+  dplyr::mutate(updown=ifelse(end < refStart,"upstream","downstream")) %>%
+  dplyr::mutate(status=ifelse(min_dist_bases <10000,"out_expand","outside"))
+
+if (nrow(outreg_orthos  %>% dplyr::filter(min_dist_bases < 10000)) > 0) {
+  print("WARNING: There is at least one paralog that is within 10 kb of a gene within your defined boundary in N2. Your boundary will be automatically expanded to include:")
+  print(outreg_orthos %>% dplyr::select(seqid,seqname,start,end,N2,min_dist_bases) %>% dplyr::filter(min_dist_bases < 10000))
+}
 
 #generate a lookup table (all_ortho_pairs) which contains all pairwise gene orthologs between REF and WILD
 orthoList <- list()
-for (i in 2:length(strainCol)) {
-  tmp <- filtOrthos %>%
-    dplyr::select(N2,strainCol[i]) %>%
-    dplyr::rename(tmpSel=strainCol[i]) %>%
+orthoList_bound <- list()
+orthoList_raw <- list()
+strainCol_iter <- strainCol_c2[!strainCol_c2 %in% c("Orthogroup","N2")]
+
+for (i in 1:length(strainCol_iter)) {
+  
+  id=strainCol_iter[i]
+  raw_tmp <- orthos %>%
+    dplyr::select(Orthogroup,strainCol_iter[i],N2) %>%
+    dplyr::mutate(str=!!sym(strainCol_iter[i])) %>%
+    dplyr::mutate(str = strsplit(as.character(str), ",")) %>%
+    tidyr::unnest(str) %>%
+    dplyr::mutate(str=trimws(str)) %>%
+    dplyr::filter(!is.na(N2)) %>%
+    dplyr::select(-strainCol_iter[i]) %>%
+    dplyr::mutate(STRAIN=strainCol_iter[i]) %>%
+    dplyr::mutate(has_any_ortho=T) %>%
+    dplyr::left_join(wild_tran,by=c("STRAIN","str"="tranname"))
+    #dplyr::select(-N2)
+  
+  orthoList_raw[[i]] <- raw_tmp
+    
+  print(paste0("Mapped orthologs for ",i,"/",length(strainCol_iter)," strains."))
+  tmp <- rbind(inreg_orthos %>% dplyr::mutate(status="within") %>% dplyr::select(Orthogroup,strainCol_iter[i],N2,seqid,seqname,start,end,og_loc,status),outreg_orthos %>% 
+                 dplyr::select(Orthogroup,strainCol_iter[i],N2,seqid,seqname,start,end,og_loc,status)) %>%
+    dplyr::select(Orthogroup,N2,strainCol_iter[i],og_loc,status) %>%
+    dplyr::rename(tmpSel=strainCol_iter[i]) %>%
     dplyr::mutate(newSel = strsplit(as.character(tmpSel), ",")) %>%
     tidyr::unnest(newSel) %>%
     dplyr::mutate(newSel=trimws(newSel)) %>%
     dplyr::select(-tmpSel) %>%
-    tidyr::separate(newSel,into = c("STRAIN","geneid",'tranid'),sep="\\.")
+    dplyr::mutate(STRAIN=strainCol_iter[i]) %>%
+    tidyr::separate(newSel,into=c("Name","tnum"),sep="\\.",remove = F) %>%
+    dplyr::select(Orthogroup,newSel,Name,STRAIN,N2,-tnum,og_loc,status) %>%
+    dplyr::rename(tranname=newSel,Parent=Name) %>%
+    dplyr::left_join(wild_tran,by=c("tranname","Parent","STRAIN")) 
+
+  orthoList[[i]] <- tmp
+  boundg <- tmp %>% 
+                            dplyr::filter(og_loc=="in_region" | status=="out_expand") %>%
+                            dplyr::select(-og_loc,-status) %>%
+                            dplyr::filter(seqid==boundChrom) %>%
+                            dplyr::mutate(og_loc=ifelse(((start >= boundStart & start <= boundEnd) | (end >= boundStart & end <= boundEnd)),"in_region","out_region")) %>%
+                            dplyr::mutate(start_dist=ifelse(og_loc=="out_region",abs(boundStart-end),NA),end_dist=ifelse(og_loc=="out_region",abs(start-boundEnd),NA)) %>%
+                            dplyr::rowwise() %>%
+                            dplyr::mutate(min_dist_bases=min(start_dist,end_dist)) %>%
+                            dplyr::ungroup() %>%
+                            dplyr::mutate(status=ifelse(og_loc=="in_region","within",ifelse(min_dist_bases < 10000 & !is.na(min_dist_bases),"out_expand","outside")))
+  check <- boundg %>% dplyr::filter(status=="out_expand")
   
-  orthoList[[i-1]] <- tmp
+  if (nrow(check) > 0) {
+    print(paste0("WARNING: There is at least one paralog that is within 10 kb of a gene within your derived boundary in ",strainCol_iter[[i]],". Your boundary will be automatically expanded to include:"))
+    print(check %>% dplyr::select(seqid,tranname,start,end,strand,STRAIN,min_dist_bases) %>% dplyr::distinct(tranname,.keep_all = T))
+    
+    sorter <- check %>% dplyr::mutate(updown=ifelse(min_dist_bases==start_dist,"upstream","downstream"))
+    upstream <- sorter %>% dplyr::filter(updown=="upstream")
+    downstream <- sorter %>% dplyr::filter(updown=="downstream")
+    
+    if (nrow(upstream) > 0) {
+      outer_lim <- max(upstream$end)
+      inner <- boundg %>% dplyr::filter(status=="within") %>% dplyr::arrange(start) %>% dplyr::filter(start==min(start))
+      inner_lim <- min(inner$start)
+      seqid_match <- as.character(unique(inner$seqid))
+      extension <- raw_tmp %>%
+        dplyr::filter(seqid==seqid_match & start > outer_lim & end <inner_lim) %>%
+        dplyr::rename(tranname=str) %>%
+        dplyr::select(Orthogroup,tranname,Parent,STRAIN,N2,everything(),-has_any_ortho) %>%
+        dplyr::mutate(og_loc="out_region",status="out_extend") %>%
+        dplyr::mutate(N2 = strsplit(as.character(N2), ",")) %>%
+        tidyr::unnest(N2) %>%
+        dplyr::mutate(N2=trimws(N2))
+        
+      boundg_inc <- rbind(extension, boundg %>% dplyr::select(-start_dist,-end_dist,-min_dist_bases))
+      orthoList_bound[[i]]  <- boundg_inc %>% dplyr::arrange(start)
+    } 
+    
+    if(nrow(downstream) > 0) {
+      outer_lim <- min(downstream$end)
+      inner <- boundg %>% dplyr::filter(status=="within") %>% dplyr::arrange(start) %>% dplyr::filter(end==max(end))
+      inner_lim <- max(inner$end)
+      seqid_match <- as.character(unique(inner$seqid))
+      extension <- raw_tmp %>%
+        dplyr::filter(seqid==seqid_match & start > inner_lim & end < outer_lim) %>%
+        dplyr::rename(tranname=str) %>%
+        dplyr::select(Orthogroup,tranname,Parent,STRAIN,N2,everything(),-has_any_ortho) %>%
+        dplyr::mutate(og_loc="out_region",status="out_extend") %>%
+        dplyr::mutate(N2 = strsplit(as.character(N2), ",")) %>%
+        tidyr::unnest(N2) %>%
+        dplyr::mutate(N2=trimws(N2))
+      
+      boundg_inc <- rbind(extension, boundg %>% dplyr::select(-start_dist,-end_dist,-min_dist_bases))
+      orthoList_bound[[i]]  <- boundg_inc %>% dplyr::arrange(start)
+    } 
+    
+    
+  } else {
+   orthoList_bound[[i]] <- boundg %>% 
+     dplyr::select(-start_dist,-end_dist,-min_dist_bases) %>% dplyr::arrange(start)
+ }
 }
-all_ortho_pairs  <- ldply(orthoList,data.frame) %>%
-  dplyr::mutate(geneid=ifelse(STRAIN=='N2',paste0(geneid,".",tranid),geneid))
 
-#prep GFF fields for join with ortholog table
-gffFilt_ortho <- gffCat %>%
-  dplyr::filter((!source=="WormBase") & type=="gene") %>%
-  dplyr::mutate(attributes=gsub("ID=","",attributes)) %>%
-  dplyr::rename(geneid=attributes) %>%
-  tidyr::separate(seqid,into = c("STRAIN","tigID1",'tigID2'),sep = '\\.',remove = F)
+all_ortho_pairs  <- ldply(orthoList,data.frame) 
+all_ortho_pairs_bound_pre <-ldply(orthoList_bound,data.frame) %>% 
+  dplyr::filter(!status=="outside") 
 
-# #join ortholog table to GFF coordinates
-#seqid delineates the contig (thus the wild strain), which sets the Y position in the haplotype plot
-#keep the longest transcript per gene
-orthoPairs_wcoord <- all_ortho_pairs %>%
-  dplyr::left_join(gffFilt_ortho,by = c("STRAIN","geneid")) %>%
-  dplyr::arrange(seqid) %>%
-  dplyr::group_by(seqid) %>%
-  dplyr::mutate(gsize=n()) %>%
-  dplyr::mutate(ypos=cur_group_id()) %>%
+corr_jumps <- all_ortho_pairs_bound_pre %>%
+  dplyr::distinct(STRAIN,Parent,.keep_all = T) %>%
+  dplyr::arrange(STRAIN,start) %>%
+  dplyr::group_by(STRAIN) %>%
+  dplyr::mutate(leadDist=lead(start)-start) %>%
+  dplyr::mutate(leadDist=ifelse(is.na(leadDist),0,leadDist)) %>%
+  dplyr::mutate(jump=ifelse(lag(leadDist)>5e4 & lag(status)=="within","JUMP","NOJUMP")) %>%
+  dplyr::mutate(jump=ifelse(is.na(jump),"NOJUMP",jump)) %>%
+  dplyr::mutate(jumpID=rleid(jump)) %>%
+  dplyr::ungroup() %>%
+  dplyr::group_by(STRAIN,jumpID) %>%
+  dplyr::mutate(jgroup_size=n()) %>%
   dplyr::ungroup() %>%
   dplyr::group_by(STRAIN) %>%
-  dplyr::filter(gsize==max(gsize)) %>%
-  dplyr::ungroup()
+  dplyr::filter(jgroup_size==max(jgroup_size)) %>%
+  dplyr::mutate(keep=T)
 
-#similar to DF above, but
-#some contigs are inverted, and gene models need to be adjusted for orientation
-#some contigs have partial alignments that contain genes further away from the local HDR
-#using lead() we can remove genes that have large (>5e4) jumps in position
-#this trimming process may be the cause of misbehavior in plots of other HDRs
-orthoPairs_wcoord_trimmer <- all_ortho_pairs %>%
-  dplyr::left_join(gffFilt_ortho,by = c("STRAIN","geneid")) %>%
-  dplyr::arrange(seqid) %>%
-  dplyr::group_by(seqid) %>%
-  dplyr::mutate(gsize=n()) %>%
-  dplyr::mutate(ypos=cur_group_id()) %>%
-  dplyr::ungroup() %>%
-  dplyr::group_by(STRAIN) %>%
-  dplyr::filter(gsize==max(gsize)) %>%
-  dplyr::ungroup() %>%
-  dplyr::left_join(hap_coords %>%
-                     dplyr::select(HIFI,inv) %>%
-                     dplyr::distinct(HIFI,.keep_all=T),by=c("seqid"="HIFI")) %>%
-  dplyr::group_by(seqid) %>%
-  dplyr::mutate(newStart=ifelse(inv==T,abs(end-(max(end))),start),newEnd=ifelse(inv==T,abs(start-(max(end))),end)) %>%
-  #dplyr::select(-start,-end) %>%
-  #dplyr::rename(start=newStart,end=newEnd) %>%
-  dplyr::ungroup() %>%
-  dplyr::arrange(seqid,newStart) %>%
-  dplyr::filter(!(is.na(STRAIN))) %>%
-  dplyr::group_by(STRAIN) %>%
-  dplyr::mutate(leadDist=abs(newEnd-lead(newStart))) %>%
-  dplyr::mutate(trm=ifelse(leadDist>5e4,"S",NA)) %>%
-  #dplyr::mutate(allPass=ifelse(any(trm=="S"),"FIX","KEEP")) %>%
-  dplyr::mutate(check=ifelse(!(is.na(trm)),row_number(),NA)) %>%
-  dplyr::mutate(fill=ifelse(STRAIN=="N2",0, check)) %>%
-  tidyr::fill(fill,.direction = 'up' ) %>%
-  dplyr::ungroup() %>%
-  dplyr::group_by(STRAIN,fill) %>%
-  dplyr::mutate(gsize_filt=n()) %>%
-  dplyr::ungroup() %>%
-  dplyr::group_by(STRAIN) %>%
-  dplyr::mutate(filt=ifelse(gsize_filt==max(gsize_filt),F,T)) %>%
-  dplyr::ungroup() %>%
-  dplyr::filter(filt==F)
-  
-  
-  #dplyr::mutate(fill=ifelse(STRAIN=="N2",0,fill_run(check, run_for_first = T)))#this is the problematic line
-  # dplyr::filter(is.na(trm) | trm=="NR")
 
-#pull the boundaries of the ortholgous genes
-pullBound <- orthoPairs_wcoord_trimmer %>%
-  dplyr::group_by(seqid) %>%
-  dplyr::mutate(boundStart = min(start), boundEnd = max(end)) %>%
-  dplyr::distinct(seqid,.keep_all = T) %>%
-  dplyr::select(STRAIN,seqid,boundStart,boundEnd) %>%
-  dplyr::ungroup()
+all_ortho_pairs_bound <- all_ortho_pairs_bound_pre %>%
+  dplyr::arrange(STRAIN,start)# %>%
+  #dplyr::left_join(corr_jumps %>% dplyr::select(STRAIN,Parent,keep),by=c("STRAIN","Parent")) %>%
+  #dplyr::filter(!is.na(keep))
+
+all_ortho_pairs_raw <- ldply(orthoList_raw,data.frame) %>% dplyr::select(STRAIN,str,has_any_ortho) %>% dplyr::rename(tranname=str) 
+
+new_boundaries_WI <-  all_ortho_pairs_bound %>%
+  dplyr::select(seqid,start,end,STRAIN,tranname,Parent) %>%
+  dplyr::group_by(STRAIN) %>%
+  dplyr::mutate(minStart=min(start), maxEnd=max(end)) %>%
+  dplyr::distinct(tranname,.keep_all = T) %>%
+  dplyr::filter(start==minStart | end==maxEnd) %>%
+  dplyr::mutate(gene2gene=paste(Parent,collapse="-")) %>%
+  dplyr::distinct(minStart,.keep_all = T) %>%
+  dplyr::ungroup() %>%
+  dplyr::select(seqid,minStart,maxEnd,STRAIN,gene2gene)
+
+N2_expand <- rbind(inreg_orthos %>% 
+                       dplyr::mutate(status="within"),outreg_orthos %>% 
+                       dplyr::select(-refStart,-refEnd,-refChrom,-start_dist,-end_dist,-min_dist_bases,-updown)) %>%
+                       #dplyr::select(Orthogroup,strainCol_iter[i],N2,seqid,seqname,start,end,og_loc,status)) %>%
+  dplyr::filter(!status=="outside")
+
+new_boundaries_N2 <- N2_expand %>%
+  dplyr::mutate(minStart=min(start), maxEnd=max(end)) %>%
+  dplyr::distinct(N2,.keep_all = T) %>% 
+  dplyr::filter(start==minStart | end==maxEnd) %>%
+  dplyr::mutate(gene2gene=paste(seqname,collapse="-")) %>%
+  dplyr::mutate(STRAIN="N2") %>%
+  dplyr::distinct(minStart,.keep_all = T) %>%
+  dplyr::select(seqid,minStart,maxEnd,STRAIN,gene2gene)
+
+new_boundaries <- rbind(new_boundaries_WI,new_boundaries_N2) %>%
+  dplyr::rename(boundStart=minStart,boundEnd=maxEnd)
 
 #find the bound genes for each strain that are not orthologous
-boundGenes <- gffCat %>%
-  dplyr::filter(type=="gene" & seqid %in% pullBound$seqid) %>%
-  dplyr::left_join(pullBound,by="seqid") %>%
-  dplyr::group_by(seqid) %>%
+boundGenes <- rbind(wild_tran %>% 
+                      dplyr::select(-boundChrom,-boundStart,-boundEnd,-REF,-refStart,-refEnd) %>% 
+                      dplyr::mutate(alias=NA),
+                    N2_tran %>% dplyr::select(tranname,seqname,STRAIN,seqid,start,end,strand,alias) %>%
+                      dplyr::rename(Parent=seqname)) %>%
+  dplyr::left_join(new_boundaries,by=c("STRAIN","seqid")) %>%
+  dplyr::filter(!is.na(boundStart)) %>%
+  dplyr::group_by(STRAIN) %>%
   dplyr::filter(start >= boundStart & start <= boundEnd) %>%
-  dplyr::ungroup() %>%
-  dplyr::mutate(geneid=gsub("ID=","",attributes)) %>%
-  dplyr::left_join(orthoPairs_wcoord,by=c('geneid','STRAIN')) %>%
-  dplyr::filter(is.na(N2)) %>%
-  dplyr::select(seqid.x, start.x, end.x, geneid) %>%
-  dplyr::rename(seqid=seqid.x,start=start.x,end=end.x) %>%
-  dplyr::mutate(N2="non-ortho")
+  dplyr::ungroup()
 
 
-#bind ortholgous and non orthologous genes for each strain, and transform the coordinates of genes to a midle axis center
-plotCoords <- rbind(boundGenes,orthoPairs_wcoord_trimmer %>% dplyr::select(seqid,start,end,geneid,N2)) %>%
-  dplyr::mutate(ortho_status=ifelse(N2=='non-ortho',F,T)) %>%
-  dplyr::left_join(hap_coords %>%
-                     dplyr::select(HIFI,inv) %>%
-                     dplyr::distinct(HIFI,.keep_all=T),by=c("seqid"="HIFI")) %>%
-  dplyr::group_by(seqid) %>%
-  dplyr::mutate(newStart=ifelse(inv==T,abs(end-(max(end))),start),newEnd=ifelse(inv==T,abs(start-(max(end))),end)) %>%
-  dplyr::select(-start,-end) %>%
-  dplyr::rename(start=newStart,end=newEnd) %>%
-  dplyr::ungroup() %>%
-  dplyr::arrange(ortho_status,seqid,start) %>%
-  dplyr::group_by(seqid) %>%
-  dplyr::mutate(leadDist=abs(end-lead(start))) %>%
-  dplyr::mutate(trm=ifelse(leadDist>5e4 | lag(leadDist) >5e4,"R","NR")) %>%
-  dplyr::ungroup() %>%
-  dplyr::filter(is.na(trm) | trm=="NR") %>%
-  dplyr::group_by(seqid) %>%
-  dplyr::mutate(newstart=start-min(start),newend=end-min(start)) %>%
-  dplyr::ungroup() %>%
-  tidyr::separate(seqid,into = c("STRAIN","tig1","tig2"),sep = "\\.",remove = F) %>%
-  dplyr::select(-tig1,-tig2,-geneid,-inv,-start,-end,-trm,-leadDist)
+N2_ad <- boundGenes %>% 
+  dplyr::filter(STRAIN=="N2") %>%
+  dplyr::mutate(tr_has_any_ortho=ifelse(tranname %in% all_orthos_unnest$N2,T,F)) %>%
+  dplyr::mutate(tr_has_bound_ortho=ifelse(tranname %in% all_ortho_pairs_bound$N2,T,F)) %>%
+  dplyr::arrange(start) %>%
+  dplyr::group_by(Parent) %>%
+  dplyr::mutate(has_any_ortho = any(tr_has_any_ortho)) %>% 
+  dplyr::mutate(has_bound_ortho = any(tr_has_bound_ortho)) %>%
+  dplyr::select(-tr_has_any_ortho,-tr_has_bound_ortho) %>%
+  dplyr::ungroup()
 
-#get N2 genes
-N2ad <- N2_genes %>%
-  dplyr::mutate(STRAIN="N2",ortho_status=T) %>%
-  dplyr::rename(N2=seqname) %>%
+reassess_distal <- N2_ad %>% dplyr::filter(has_any_ortho==T & has_bound_ortho==F) 
+distal_ortho <- inreg_orthos %>% 
+  dplyr::filter(N2 %in% reassess_distal$tranname) %>% 
+  dplyr::mutate(comma_count = stringr::str_count(CB4856, ",")+1) %>%
+  dplyr::group_by(CB4856) %>%
+  dplyr::mutate(comma_count=sum(comma_count)) %>%
+  dplyr::filter(comma_count > 1)
+
+N2_ad_corr <- N2_ad %>%
+  dplyr::mutate(has_any_ortho=ifelse(tranname %in% distal_ortho$N2,F,has_any_ortho))
+
+WI_ad <- boundGenes %>% 
+  dplyr::filter(!STRAIN=="N2") %>%
+  dplyr::left_join(all_ortho_pairs_raw,by=c("STRAIN","tranname")) %>%
+  dplyr::mutate(tr_has_any_ortho=ifelse(is.na(has_any_ortho),F,has_any_ortho)) %>%
+  dplyr::left_join(all_ortho_pairs_bound %>% dplyr::select(tranname,STRAIN,N2,status) %>% dplyr::filter(N2 %in% N2_ad$tranname),by=c("tranname","STRAIN")) %>%
+  dplyr::mutate(tr_has_bound_ortho=ifelse(!is.na(status),T,F)) %>%
+  dplyr::select(-status,-has_any_ortho,-N2) %>% 
+  dplyr::group_by(Parent) %>%
+  dplyr::mutate(has_any_ortho = any(tr_has_any_ortho)) %>% 
+  dplyr::mutate(has_bound_ortho = any(tr_has_bound_ortho)) %>%
+  dplyr::select(-tr_has_any_ortho,-tr_has_bound_ortho) %>%
+  dplyr::ungroup() %>% 
+  dplyr::group_by(STRAIN) %>%
+  dplyr::mutate(n_gene=n_distinct(Parent)) %>%
+  dplyr::ungroup() %>%
+  dplyr::arrange(n_gene) %>%
+  dplyr::mutate(y_pos=rleid(STRAIN)) %>%
+  dplyr::select(-n_gene) #%>%
+  #dplyr::mutate(y_pos=ifelse(strand=="+",y_pos+0.2,y_pos-0.2))
+
+N2_ad_corr <- N2_ad_corr %>%
+  dplyr::mutate(y_pos=max(WI_ad$y_pos)+1)
+
+reassess_distal_WI <- WI_ad %>% dplyr::filter(has_any_ortho==T & has_bound_ortho==F) 
+raw_WI <- ldply(orthoList_raw,data.frame) %>% dplyr::rename(tranname=str) 
+distal_ortho_WI <- all_orthos_unnest %>% 
+  dplyr::filter(grepl(paste(reassess_distal_WI$tranname,collapse="|"),CB4856)) %>% 
+  dplyr::mutate(comma_count_N2 = stringr::str_count(N2, ",")+1) %>%
+  dplyr::mutate(comma_count_CB = stringr::str_count(CB4856, ",")+1) %>% 
+  dplyr::filter(comma_count_N2 > 1 | comma_count_CB > 1 ) %>%
+  dplyr::mutate(CB4856 = strsplit(as.character(CB4856), ",")) %>%
+  tidyr::unnest(CB4856) %>%
+  dplyr::mutate(CB4856=trimws(CB4856)) 
+
+WI_ad_corr <- WI_ad %>%
+  dplyr::mutate(has_any_ortho=ifelse(tranname %in% distal_ortho_WI$CB4856,F,has_any_ortho))
+
+all_ad <- rbind(N2_ad_corr,WI_ad_corr) %>% 
+  dplyr::arrange(STRAIN,start) %>%
+  dplyr::group_by(STRAIN) %>%
+  dplyr::mutate(gen_pos=rleid(Parent)) %>%
   dplyr::mutate(shift=min(start)) %>%
-  dplyr::mutate(newstart=start-shift,newend=end-shift) %>%
-  dplyr::select(seqid,STRAIN,N2,ortho_status,newstart,newend,shift) 
-
-#store the N2 coordinate shift
-N2_shift <- c("N2",unique(N2ad$shift))
-#remove it from DF
-N2ad <- N2ad %>% dplyr::select(-shift)
-
-# get SR HVR calls
-hd_reg <- all_SR_calls %>%
-  dplyr::filter(CHROM==hap_chrom) %>%
-  dplyr::filter((minStart >= hap_start & minStart<= hap_end) | (maxEnd<= hap_end & maxEnd >= hap_start)) %>%
-  dplyr::group_by(STRAIN) %>%
-  dplyr::filter(divSize==max(divSize))
-
-#get reference-collapsed calls
-hd_collapse <- collapsed_ff %>%
-  dplyr::filter(CHROM==hap_chrom) %>%
-  dplyr::filter((minStart >= hap_start & minStart<= hap_end) | (maxEnd<= hap_end & maxEnd >= hap_start)) %>%
-  dplyr::mutate(minStart=minStart-as.numeric(N2_shift[2]),maxEnd=maxEnd-as.numeric(N2_shift[2])) %>%
-  dplyr::mutate(STRAIN="N2")
-
-
-
-########################### PLOT ALL POSSIBLE HAP ##############################
-
-#gene positions
-plotCoords2 <- rbind(N2ad,plotCoords) %>%
-  dplyr::group_by(STRAIN) %>%
-  dplyr::mutate(minStart=min(newstart),maxEnd=max(newend)) %>%
+  dplyr::mutate(end=end-min(start),start=start-min(start)) %>%
   dplyr::ungroup() %>%
-  dplyr::mutate(midpoint=(minStart+maxEnd)/2) %>%
-  dplyr::mutate(centeredStart=newstart-midpoint,centeredEnd=newend-midpoint) %>%
-  dplyr::filter(!is.na(seqid)) %>%
-  dplyr::left_join(aliases,by=c("N2"="seqname"))
+  dplyr::mutate(col=ifelse(has_any_ortho==T & has_bound_ortho ==T,2,ifelse(has_any_ortho==T,1,0))) 
 
-#center line positions
-hlines <- plotCoords2 %>%
+
+hlines <- new_boundaries %>% 
+  dplyr::left_join(all_ad %>% dplyr::select(STRAIN,y_pos) %>% dplyr::distinct(STRAIN,.keep_all = T),by="STRAIN") %>%
+  dplyr::left_join(all_ad %>% dplyr::select(STRAIN,shift) %>% dplyr::distinct(STRAIN,.keep_all = T),by="STRAIN")
+
+segments <- all_ortho_pairs_bound %>%
+  dplyr::select(STRAIN,Parent,start,end,N2,strand) %>%
   dplyr::group_by(STRAIN) %>%
-  dplyr::mutate(hlineStart=min(centeredStart)-1000,
-                hlineEnd=max(centeredEnd)+1000) %>%
-  dplyr::select(STRAIN,hlineStart,hlineEnd)
-
-#lab positions
-labs <- plotCoords2 %>%
-  dplyr::mutate(labStart=min(centeredStart)+0.2*(min(centeredStart))) %>%
-  dplyr::select(STRAIN,labStart,seqid) %>%
-  dplyr::distinct(seqid,.keep_all = T) 
-
-regDef_WI <- plotCoords2 %>%
-  #dplyr::filter((!STRAIN=="N2") & (N2=="N2.F19B10.9" | N2=="N2.F40H7.5")) %>%
-  dplyr::group_by(STRAIN) %>%
-  dplyr::mutate(regStart=min(centeredStart)+offset,regEnd=max(centeredEnd)-offset) %>%
+  dplyr::distinct(Parent,N2,.keep_all = T) %>%
+  dplyr::left_join(N2_tran %>% 
+                     dplyr::rename(start_N2=start,end_N2=end,strand_N2=strand,chrom_N2=seqid,N2id=STRAIN) %>% 
+                     dplyr::select(tranname,chrom_N2,start_N2,end_N2,strand_N2,alias,seqname,N2id),
+                   by=c("N2"="tranname")) %>% 
+  dplyr::filter(N2 %in% N2_ad$tranname) %>%
+  #dplyr::filter(chrom_N2==seqid & start_N2 > (boundStart-5e4) & end_N2 < (boundEnd+5e4)) #%>%
+  dplyr::left_join(all_ad %>% dplyr::select(STRAIN,y_pos) %>% dplyr::distinct(STRAIN,.keep_all = T),by="STRAIN") %>%
+  dplyr::rename(WI_y_pos=y_pos) %>%
+  dplyr::left_join(all_ad %>% dplyr::select(STRAIN,y_pos) %>% dplyr::distinct(STRAIN,.keep_all = T),by=c("N2id"="STRAIN")) %>%
+  dplyr::rename(N2_y_pos=y_pos) %>%
+  dplyr::mutate(N2_shift=min(start_N2),WI_shift=min(start)) %>%
   dplyr::ungroup() %>%
-  dplyr::distinct(STRAIN,.keep_all = T) %>%
-  dplyr::select(STRAIN,regStart,regEnd)
+  dplyr::mutate(WI_x_pos=(start+((end-start)/2))-WI_shift, N2_x_pos=(start_N2+((end_N2-start_N2)/2)-N2_shift)) %>%
+  dplyr::mutate(WI_y_pos=WI_y_pos+0.2,N2_y_pos=N2_y_pos-0.2) %>%
+  dplyr::distinct(STRAIN,Parent,seqname,.keep_all = T) %>%
+  dplyr::group_by(STRAIN,Parent) %>%
+  dplyr::mutate(n1=n()) %>%
+  dplyr::ungroup() %>%
+  dplyr::group_by(STRAIN,seqname) %>%
+  dplyr::mutate(n2=n()) %>%
+  dplyr::ungroup() %>%
+  dplyr::mutate(col=ifelse(n1>1 | n2>1,"multi_copy","single_copy")) #%>%
+  #dplyr::mutate(N2_y_pos=ifelse(strand_N2=="+",N2_y_pos,N2_y_pos-0.4),WI_y_pos=ifelse(strand=="+",WI_y_pos,WI_y_pos-0.4))
 
-#plot
-allhap<- ggplot() +
-  geom_rect(data=regDef_WI,aes(xmin=regStart,xmax=regEnd,ymin=1-0.5,ymax=1+0.5),fill='lightblue')+
-  geom_segment(data=hlines,aes(x=hlineStart,xend=hlineEnd,y=1,yend=1)) +
-  geom_rect(data=plotCoords2 %>% dplyr::filter(ortho_status==T),aes(xmin=centeredStart,xmax=centeredEnd,ymin=1-0.5,ymax=1+0.5,fill=locus_name),color="black") +
-  geom_rect(data=plotCoords2 %>% dplyr::filter(ortho_status==F),aes(xmin=centeredStart,xmax=centeredEnd,ymin=1-0.5,ymax=1+0.5,color='non-ortho')) +
-  geom_text(data=labs,aes(x=labStart,y=1,label=STRAIN)) +
-  #facet_wrap(~factor(STRAIN, levels=c('N2','NIC2','ECA36','ECA396', 'MY2693', 'EG4725','JU2600','JU310','MY2147','JU1400','NIC526','JU2526','QX1794','CB4856','XZ1516','DL238')),ncol=1) +
-  facet_wrap(~factor(STRAIN, levels=c('N2','NIC2','ECA36' ,'DL238',"CB4856",'EG4725','MY2147','NIC526','JU2600','JU310','JU1400','XZ1516','JU2526',"QX1794","MY2693","ECA396")),ncol=1) +
-  theme(strip.text = element_blank(),axis.text = element_blank(),axis.ticks = element_blank(),axis.title = element_blank()) +
-  scale_color_manual(values = c('non-ortho'='darkgrey')) +
-  guides(fill = guide_legend(override.aes = list(size = 0.5))) +
-  labs(fill='Locus name') 
-allhap
-########################### NEW 6HAP LOCUS ##############################
-# 
-#   
-# plotCoords3 <- rbind(N2ad %>% dplyr::filter(!(N2=="N2.F02E11.3")),plotCoords) %>%
-#     dplyr::group_by(STRAIN) %>%
-#     dplyr::mutate(minStart=min(newstart),maxEnd=max(newend)) %>%
-#     dplyr::ungroup() %>%
-#     dplyr::mutate(midpoint=(minStart+maxEnd)/2) %>%
-#     dplyr::mutate(centeredStart=newstart-midpoint,centeredEnd=newend-midpoint) %>%
-#     dplyr::filter(!is.na(seqid)) %>%
-#     dplyr::filter(STRAIN =="N2" | STRAIN == "CB4856" | STRAIN=="DL238"| STRAIN=="XZ1516"| STRAIN=="QX1794"| STRAIN=="MY2693")
-# 
-# midpoints <- plotCoords3 %>% 
-#   dplyr::select(STRAIN,midpoint) %>%
-#   dplyr::distinct(STRAIN,.keep_all = T)
-# 
-# hlines <- plotCoords3 %>%
+plot_ad <- all_ad %>%
+  dplyr::group_by(STRAIN,Parent) %>%
+  dplyr::filter(col==max(col)) %>%
+  dplyr::ungroup() %>%
+  dplyr::distinct(STRAIN,Parent,.keep_all = T) %>%
+  dplyr::mutate(class=ifelse(col==0,"no_known_ortho",ifelse(col==1,"has_distal_ortho","has_local_ortho"))) %>%
+  dplyr::mutate(class=ifelse(class=="no_known_ortho" & STRAIN=="N2","no_known_allelic_N2",ifelse(class=="no_known_ortho" & STRAIN=="CB4856","no_known_allelic_CB",class)))
+
+plot_ad2 <- all_ad %>%
+  dplyr::group_by(STRAIN,Parent) %>%
+  dplyr::filter(col==max(col)) %>%
+  dplyr::ungroup() %>%
+  dplyr::distinct(STRAIN,Parent,.keep_all = T) %>%
+  dplyr::mutate(class=ifelse(col==0,"no_known_ortho",ifelse(col==1,"has_distal_ortho","has_local_ortho"))) %>%
+  dplyr::mutate(class=ifelse(class=="no_known_ortho" & STRAIN=="N2","no_known_allelic_N2",ifelse(class=="no_known_ortho" & STRAIN=="CB4856","no_known_allelic_CB",class))) %>%
+  dplyr::mutate(class=ifelse(tranname=="Transcript_F11A5.10.1"|tranname=="g6321.t1","glc-1",class))
+
+#CB_shift <- all_ad %>% dplyr::filter(STRAIN=="CB4856")
+# tigs <- tigFilt %>%
+#   dplyr::arrange(S2) %>%
 #   dplyr::group_by(STRAIN) %>%
-#   dplyr::mutate(hlineStart=min(centeredStart)-1000,
-#                 hlineEnd=max(centeredEnd)+1000) %>%
-#   dplyr::select(STRAIN,hlineStart,hlineEnd)
-# 
-# labs <- plotCoords3 %>%
-#   dplyr::mutate(labStart=min(centeredStart)+0.2*(min(centeredStart))) %>%
-#   dplyr::select(STRAIN,labStart,seqid) %>%
-#   dplyr::distinct(seqid,.keep_all = T) 
-# 
-# ggplot() +
-#   geom_rect(data=hd_collapse,aes(xmin=minStart,xmax=maxEnd,ymin=1-0.5,ymax=1+0.5,color='lightgrey',alpha=0.2)) +
-#   geom_segment(data=hlines,aes(x=hlineStart,xend=hlineEnd,y=1,yend=1)) +
-#   geom_rect(data=plotCoords3 %>% dplyr::filter(ortho_status==T),aes(xmin=centeredStart,xmax=centeredEnd,ymin=1-0.5,ymax=1+0.5,fill=N2,color="black")) +
-#   geom_rect(data=plotCoords3 %>% dplyr::filter(ortho_status==F),aes(xmin=centeredStart,xmax=centeredEnd,ymin=1-0.5,ymax=1+0.5,color='non-ortho')) +
-#   geom_text(data=labs,aes(x=labStart,y=1,label=STRAIN)) +
-#   facet_wrap(~factor(STRAIN, levels=c('N2','CB4856','XZ1516','DL238','QX1794','MY2693')),ncol=1) +
-#   theme(strip.text = element_blank(),
-#         axis.text = element_blank(),
-#         axis.ticks = element_blank(),
-#         axis.title = element_blank(),
-#         panel.background = element_blank()) +
-#   scale_color_manual(values = c('non-ortho'='darkgrey'))
+#   dplyr::mutate(leadDiff=lead(S2)-S2) %>%
+#   dplyr::mutate(lagDiff=S2-lag(S2)) %>%
+#   dplyr::mutate(lagDiff=ifelse(is.na(lagDiff),0,lagDiff)) %>%
+#   dplyr::mutate(leadDiff=ifelse(is.na(leadDiff),0,leadDiff)) %>%
+#   dplyr::mutate(drop=ifelse(lagDiff >2e5 & lag(leadDiff) > 2e5,T,F)) %>%
+#   dplyr::filter(drop==F)%>%
+#   dplyr::ungroup() %>%
+#  dplyr::select(-lagDiff,-leadDiff,-drop) %>% dplyr::filter(STRAIN=="CB4856") %>% dplyr::select(S2,E2) %>% dplyr::mutate(INV=ifelse(S2>E2,"INV","NORM")) %>% dplyr::mutate(S2_adj=S2-unique(CB_shift$shift),E2_adj=E2-unique(CB_shift$shift))
 
-############ PLOT SEA-1 3HAP LOCUS ##############
-#here I have previous knowledge of the haplotype strycture of this region
-#I've collapsed the plot to the coordinates of the three core haplotypes
-
-#you can select a few strains to filter for
-strainSet <- c("N2","ECA36","NIC2","JU2526","ECA396")
-
-plotCoords4 <- rbind(N2ad,plotCoords) %>%
-  dplyr::group_by(STRAIN) %>%
-  dplyr::mutate(minStart=min(newstart),maxEnd=max(newend)) %>%
-  dplyr::ungroup() %>%
-  dplyr::mutate(midpoint=(minStart+maxEnd)/2) %>%
-  dplyr::mutate(centeredStart=newstart-midpoint,centeredEnd=newend-midpoint) %>%
-  dplyr::filter(!is.na(seqid)) %>%
-  dplyr::filter(STRAIN %in% strainSet) %>%
-  dplyr::left_join(aliases,by=c("N2"="seqname"))
-
-midpoints <- plotCoords4 %>% 
-  dplyr::select(STRAIN,midpoint) %>%
-  dplyr::distinct(STRAIN,.keep_all = T)
-
-hlines <- plotCoords4 %>%
-  dplyr::group_by(STRAIN) %>%
-  dplyr::mutate(hlineStart=min(centeredStart)-1000,
-                hlineEnd=max(centeredEnd)+1000) %>%
-  dplyr::select(STRAIN,hlineStart,hlineEnd)
-
-labs <- plotCoords4 %>%
-  dplyr::mutate(labStart=min(centeredStart)+0.2*(min(centeredStart))) %>%
-  dplyr::select(STRAIN,labStart,seqid) %>%
-  dplyr::distinct(seqid,.keep_all = T) 
-
-
-# test<- data.frame(STRAIN=c("N2","CB4856","DL238"),newLab=c("N2\nNIC2\nECA36\nECA396",
-#                                                            "QX1794\tJU1400\nMY2693\tJU2526\nJU2600\tJU310\nMY2147\tNIC526\nCB4856\tEG4725\nXZ1516\t            \n",
-#                                                            "DL238"),newLab2=c(NA,"MY2147\nNIC526\nCB4856\nEG4725\nXZ1516\n",NA))
-#test<- data.frame(STRAIN=c("N2","CB4856","DL238"),newLab=c("N2\nNIC2\nECA36\nECA396",
-#                                                           "QX1794\nJU1400\nMY2693\nJU2526\nJU2600\nJU310",
-#                                                           "DL238"),newLab2=c(NA,"MY2147\nNIC526\nCB4856\nEG4725\nXZ1516\n",NA))
-
-# labs <- labs %>%
-#   dplyr::left_join(test,by="STRAIN")
-
-regDef_WI <- plotCoords4 %>%
-  #dplyr::filter((!STRAIN=="N2") & (N2=="N2.F19B10.9" | N2=="N2.F40H7.5")) %>%
-  dplyr::group_by(STRAIN) %>%
-  dplyr::mutate(regStart=min(centeredStart)+offset,regEnd=max(centeredEnd)-offset) %>%
-  dplyr::ungroup() %>%
-  dplyr::distinct(STRAIN,.keep_all = T) %>%
-  dplyr::select(STRAIN,regStart,regEnd)
-
-hap3 <- ggplot() +
-  geom_rect(data=hd_collapse,aes(xmin=minStart-as.numeric(midpoints[1,2]),xmax=maxEnd-as.numeric(midpoints[1,2]),ymin=1-0.5,ymax=1+0.5),fill='lightgrey')+
-  geom_rect(data=regDef_WI,aes(xmin=regStart,xmax=regEnd,ymin=1-0.5,ymax=1+0.5),fill='lightblue')+
-  geom_segment(data=hlines,aes(x=hlineStart,xend=hlineEnd,y=1,yend=1)) +
-  geom_rect(data=plotCoords4 %>% dplyr::filter(ortho_status==T),aes(xmin=centeredStart,xmax=centeredEnd,ymin=1-0.5,ymax=1+0.5,fill=locus_name),color="black") +
-  geom_rect(data=plotCoords4 %>% dplyr::filter(ortho_status==F),aes(xmin=centeredStart,xmax=centeredEnd,ymin=1-0.5,ymax=1+0.5),fill='darkgrey',color="black") +
-  #geom_text(data=labs %>% dplyr::filter(!STRAIN=="CB4856"),aes(x=labStart-2000,y=1,label=newLab),size=2.2,hjust=0.5,fontface='bold') +
-  #geom_text(data=labs %>% dplyr::filter(STRAIN=="CB4856"),aes(x=labStart+3000,y=1,label=newLab),size=2.2,hjust=1,fontface='bold') +
-  #geom_text(data=labs %>% dplyr::filter(STRAIN=="CB4856"),aes(x=labStart-2500,y=1,label=newLab2),size=2.2,hjust=1,fontface='bold') +
-  geom_text(data=labs,aes(x=labStart,y=1,label=STRAIN)) +
-  facet_wrap(~factor(STRAIN, levels=strainSet),ncol=1) +
-  theme(strip.text = element_blank(),
-        axis.text = element_blank(),
-        axis.ticks = element_blank(),
-        axis.title = element_blank(),
+all_hap <- ggplot() +
+  geom_segment(data=hlines,aes(x=boundStart-shift,xend=boundEnd-shift,y=y_pos,yend=y_pos))+
+  geom_segment(data=segments,aes(x=WI_x_pos,xend=N2_x_pos,y=WI_y_pos,yend=N2_y_pos,col=col)) +
+  geom_rect(data=plot_ad, aes(xmin=start,xmax=end,ymin=y_pos+0.2,ymax=y_pos-0.2,fill=class),color="black") +
+  theme(legend.title = element_blank(),
         panel.background = element_blank(),
-        legend.text = element_text(size=7),
-        legend.title = element_text(size=7,)) +
-  #scale_color_manual(values = c('non-ortho'='darkgrey')) +
-  #xlim(min(labs$labStart)-5000,max(hlines$hlineEnd)) +
-  guides(fill = guide_legend(override.aes = list(size = 0.5))) +
-  labs(fill='Locus name') 
-hap3
-       
-reg <- paste0(hap_chrom,".",hap_start,"-",hap_end)
-dir <-getwd()
-f1 <- paste0(dir,"/figs/","allhap","_",reg,".png")
-f2 <- paste0(dir,"/figs/","hap3","_",reg,".png")
-ggsave(f1,allhap,height = 4.5,width = 8.5,units = 'in',device = 'png',dpi = 900) 
-ggsave(f2,hap3,height = 3.5,width = 6.5,units = 'in',device = 'png',dpi = 900) 
+        axis.title = element_blank(),
+        axis.text = element_blank(),
+        axis.title.x = element_blank(),
+        #axis.title.y = element_text("77 isotype strains"),
+        axis.ticks = element_blank()) +
+  scale_color_manual(values=c("multi_copy"="black","single_copy"="grey")) +
+  scale_fill_manual(values=c("has_local_ortho"="grey","has_distal_ortho"="black","no_known_allelic_N2"="#DB6333","no_known_allelic_CB"="blue")) +
+  scale_x_continuous(expand = c(0.01,0)) #+
+  #ylab("77 isotype strains")#+
+  #geom_segment(data=tigs,aes(x=S2_adj,xend=E2_adj,y=0.7,yend=0.7,col=INV))
+
+all_hap2 <- ggplot() +
+  geom_segment(data=hlines,aes(x=boundStart-shift,xend=boundEnd-shift,y=y_pos,yend=y_pos))+
+  geom_segment(data=segments,aes(x=WI_x_pos,xend=N2_x_pos,y=WI_y_pos,yend=N2_y_pos,col=col)) +
+  geom_rect(data=plot_ad, aes(xmin=start,xmax=end,ymin=y_pos+0.2,ymax=y_pos-0.2,fill=class),color="black") +
+  theme(legend.title = element_blank(),
+        panel.background = element_blank(),
+        axis.title = element_blank(),
+        axis.text = element_blank(),
+        axis.title.x = element_blank(),
+        #axis.title.y = element_text("77 isotype strains"),
+        axis.ticks = element_blank()) +
+  scale_color_manual(values=c("multi_copy"="grey","single_copy"="black")) +
+  scale_fill_manual(values=c("has_local_ortho"="grey","has_distal_ortho"="black","no_known_allelic_N2"="#DB6333","no_known_allelic_CB"="blue")) +
+  scale_x_continuous(expand = c(0.01,0)) #+
+#ylab("77 isotype strains")#+
+#geom_segment(data=tigs,aes(x=S2_adj,xend=E2_adj,y=0.7,yend=0.7,col=INV))
+all_hap
+all_hap2
 
 
+# all_hap3 <- ggplot() +
+#   geom_segment(data=hlines,aes(x=boundStart-shift,xend=boundEnd-shift,y=y_pos,yend=y_pos))+
+#   geom_segment(data=segments,aes(x=WI_x_pos,xend=N2_x_pos,y=WI_y_pos,yend=N2_y_pos,col=col)) +
+#   geom_rect(data=plot_ad2, aes(xmin=start,xmax=end,ymin=y_pos+0.2,ymax=y_pos-0.2,fill=class),color="black") +
+#   theme(legend.title = element_blank(),
+#         panel.background = element_blank(),
+#         axis.title = element_blank(),
+#         axis.text = element_blank(),
+#         axis.title.x = element_blank(),
+#         #axis.title.y = element_text("77 isotype strains"),
+#         axis.ticks = element_blank()) +
+#   scale_color_manual(values=c("multi_copy"="black","single_copy"="grey")) +
+#   scale_fill_manual(values=c("has_local_ortho"="grey","has_distal_ortho"="black","no_known_allelic_N2"="#DB6333","no_known_allelic_CB"="blue","glc-1"="green")) +
+#   scale_x_continuous(expand = c(0.01,0)) #+
+# #ylab("77 isotype strains")#+
+# #geom_segment(data=tigs,aes(x=S2_adj,xend=E2_adj,y=0.7,yend=0.7,col=INV))
+# 
+# all_hap4 <- ggplot() +
+#   geom_segment(data=hlines,aes(x=boundStart-shift,xend=boundEnd-shift,y=y_pos,yend=y_pos))+
+#   geom_segment(data=segments,aes(x=WI_x_pos,xend=N2_x_pos,y=WI_y_pos,yend=N2_y_pos,col=col)) +
+#   geom_rect(data=plot_ad2, aes(xmin=start,xmax=end,ymin=y_pos+0.2,ymax=y_pos-0.2,fill=class),color="black") +
+#   theme(legend.title = element_blank(),
+#         panel.background = element_blank(),
+#         axis.title = element_blank(),
+#         axis.text = element_blank(),
+#         axis.title.x = element_blank(),
+#         #axis.title.y = element_text("77 isotype strains"),
+#         axis.ticks = element_blank()) +
+#   scale_color_manual(values=c("multi_copy"="grey","single_copy"="black")) +
+#   scale_fill_manual(values=c("has_local_ortho"="grey","has_distal_ortho"="black","no_known_allelic_N2"="#DB6333","no_known_allelic_CB"="blue","glc-1"="green")) +
+#   scale_x_continuous(expand = c(0.01,0))
 
-# ggplot(orthoPairs_wcoord_trimmer) +
-#   geom_rect(aes(xmin=start,xmax=end,ymin=1-0.5,ymax=1+0.5,fill=N2)) +
-#   facet_wrap(~seqid,scales = 'free_x',ncol=1) +
-#   theme(strip.text = element_blank())
+# ggsave("/vast/eande106/projects/Lance/THESIS_WORK/gene_annotation/plots/glc1_QTL_CBxN2_CNVPAV.png",all_hap, device = 'png',dpi=900,width = 15,height = 2.7,units = 'in')
+# ggsave("/vast/eande106/projects/Lance/THESIS_WORK/gene_annotation/plots/glc1_QTL_CBxN2_CNVPAV_rev.png",all_hap2, device = 'png',dpi=900,width = 15,height = 2.7,units = 'in')
+# ggsave("/vast/eande106/projects/Lance/THESIS_WORK/gene_annotation/plots/glc1_QTL_CBxN2_CNVPAV_glc1.png",all_hap3, device = 'png',dpi=900,width = 15,height = 2.7,units = 'in')
+# ggsave("/vast/eande106/projects/Lance/THESIS_WORK/gene_annotation/plots/glc1_QTL_CBxN2_CNVPAV_glc1_rev.png",all_hap4, device = 'png',dpi=900,width = 15,height = 2.7,units = 'in')
 
+ggsave("/vast/eande106/projects/Lance/THESIS_WORK/gene_annotation/plots/IIL_2.36-2.66_CBxN2_CNVPAV.png",all_hap, device = 'png',dpi=900,width = 15,height = 2.7,units = 'in')
+ggsave("/vast/eande106/projects/Lance/THESIS_WORK/gene_annotation/plots/IIL_2.36-2.66_CBxN2_CNVPAV_rev.png",all_hap2, device = 'png',dpi=900,width = 15,height = 2.7,units = 'in')
+  
