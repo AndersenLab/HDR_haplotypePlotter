@@ -20,18 +20,17 @@ library(stringr)
 #################
 
 #read all pairwise genome coordinate comparisons
-transformed_coords <- readr::read_tsv("../../processed_data/gene_diversity/CBCN_nucmer_db_20250603.tsv",col_names = F) 
+transformed_coords <- readr::read_tsv("../working_data/CBCN_nucmer_db_20250603.tsv",col_names = F) 
 colnames(transformed_coords) <- c("S1","E1","S2","E2","L1","L2","IDY","LENR","LENQ","REF","HIFI","STRAIN")
 transformed_coords <- transformed_coords %>% dplyr::filter(!STRAIN=="AF16" & !STRAIN=="JU1422")
 
 #read concatentated gene models of every genome (L3 features are removed)
-gffCat <- readr::read_tsv("../../processed_data/gene_diversity/CBCN_L1L2_master.tsv", col_names = F)
+gffCat <- readr::read_tsv("../working_data/CBCN_L1L2_master.tsv", col_names = F)
 colnames(gffCat) <- c("seqid","source","type","start","end","score","strand","phase","attributes","STRAIN")
 gffCat <- gffCat %>% dplyr::filter(!STRAIN=="AF16.WBPS19" & !STRAIN=="JU1422.WBPS19") %>% dplyr::mutate(STRAIN=ifelse(STRAIN=="QX1410.curated","QX1410",STRAIN))
 
 #read ortholog relationships among gene models
-#orthos <- readr::read_tsv("./input/Orthogroups.tsv")
-orthos <- readr::read_tsv("../../processed_data/gene_diversity/CBCN_orthogroups.tsv") %>% dplyr::rename(QX1410=QX1410.curated.longest.protein)
+orthos <- readr::read_tsv("../working_data/CBCN_orthogroups.tsv") %>% dplyr::rename(QX1410=QX1410.curated.longest.protein)
 strainCol <- colnames(orthos)
 strainCol_c1 <- gsub(".braker.longest.protein","",strainCol)
 strainCol_c2 <- gsub(".longest.protein","",strainCol_c1)
@@ -744,5 +743,5 @@ all_hap_bg <- ggplot() +
 #ggsave(plot = all_hap_bg,filename = outfile_png,width = 7.5,height = 8.5,device = "png",units = "in",dpi = 600,bg = "white")
 
 #store ggplot in Rds for concatenating with other plots
-outfile_rd <- paste0("../../processed_data/gene_diversity/HDR_",hdr_chrom,"_",hdr_start_pos,"_",hdr_end_pos,"_",length(desired_strains),"rg",".Rds")
+outfile_rd <- paste0("../output_objects/HDR_",hdr_chrom,"_",hdr_start_pos,"_",hdr_end_pos,"_",length(desired_strains),"rg",".Rds")
 saveRDS(all_hap_bg, file=outfile_rd)
