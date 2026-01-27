@@ -7,7 +7,7 @@ library(cowplot)
 library(ape)
 library(data.table)
 library(stringr)
-
+library(scales)
 ##### NOTES #####
 #This script seeks to visualize structurally complex HDRs. This is not a fully automated process and requires attention.
 #Some genomes will display unique structural differences that lack reliable anchors of homologous sequences that map adjacent to a selected reference genomic region.
@@ -55,7 +55,7 @@ refrence_bins <- readr::read_tsv("../working_data/QX1410_genomic_windows.1kb.bed
 #we drop the nigonis for now
 transformed_coords_hidy <- transformed_coords %>% 
   dplyr::filter(IDY>=95) %>%
-  dplyr::filter(L1 >1e4 & L2 > 1e4) %>%
+  dplyr::filter(L1 >5e3 & L2 > 5e3) %>%
   dplyr::filter(!(STRAIN %in% nigonis))
 
 #intervals to data table
@@ -100,10 +100,97 @@ setorder(ov, CHROM, STRAIN, bin_start, -aln_len,-IDY)
 
 # keep one row per bin (drops remaining ties as duplicates)
 #we then explore data at the alignment level (rather than bin level)
-hm <- ov[, .SD[1], by = .(CHROM, STRAIN, bin_start, bin_end, bin_mid)] %>%
+om <- ov[, .SD[1], by = .(CHROM, STRAIN, bin_start, bin_end, bin_mid)] 
+
+nstr=length(unique(om$STRAIN))
+
+om_freq <- as.data.frame(om) %>%
+  dplyr::group_by(CHROM,bin_start,bin_end) %>%
+  dplyr::mutate(freq=(n()/nstr)*100) %>%
+  dplyr::ungroup()
+
+hm<- om %>% 
   dplyr::select(CHROM,STRAIN,IDY,ref_start,ref_end,HIFI,S2,E2,aln_len) %>%
   dplyr::group_by(STRAIN,CHROM)%>%
   dplyr::distinct(HIFI,S2,.keep_all = T)
+
+
+# order strains (optional but usually nicer)
+strain_levels <- om_freq %>%
+  dplyr::group_by(STRAIN) %>%
+  summarise(mean_idy = mean(IDY, na.rm = TRUE), .groups = "drop") %>%
+  arrange(desc(mean_idy)) %>%
+  pull(STRAIN)
+
+df <- om_freq %>%
+  dplyr::mutate(
+    STRAIN = factor(STRAIN, levels = strain_levels),
+    y = as.numeric(STRAIN)
+  )
+
+
+ggplot(df) +
+  geom_rect(aes(
+    xmin = bin_start,
+    xmax = bin_end,
+    ymin = y - 0.45,
+    ymax = y + 0.45,
+    fill = freq
+  )) +
+  facet_grid(CHROM ~ ., scales = "free_x", space = "free_x") +
+  scale_fill_gradientn(
+    colours = c("red", "yellow", "green"),
+    limits = c(0, 100),
+    oob = scales::squish,
+    name = "Frequency"
+  ) +
+  scale_x_continuous(
+    labels = label_number(scale = 1e-6, suffix = " Mb"),
+    expand = c(0.01, 0)
+  ) +
+  scale_y_continuous(
+    breaks = seq_along(levels(df$STRAIN)),
+    labels = levels(df$STRAIN),
+    expand = c(0.01, 0)
+  ) +
+  labs(x = "Physical position (Mb)", y = "STRAIN") +
+  theme_minimal() +
+  theme(panel.grid = element_blank(),
+        legend.position = "none",
+        axis.text.y = element_blank())
+
+
+ggplot(df%>% dplyr::filter(CHROM=="V")) +
+  geom_rect(aes(
+    xmin = bin_start,
+    xmax = bin_end,
+    ymin = y - 0.45,
+    ymax = y + 0.45,
+    fill = freq
+  )) +
+  facet_grid(CHROM ~ ., scales = "free_x", space = "free_x") +
+  scale_fill_gradientn(
+    colours = c("red", "yellow", "green"),
+    limits = c(0, 100),
+    oob = scales::squish,
+    name = "Frequency"
+  ) +
+  scale_x_continuous(
+    labels = label_number(scale = 1e-6, suffix = " Mb"),
+    expand = c(0.01, 0),
+    limits=c(15e6,19e6)
+  ) +
+  scale_y_continuous(
+    breaks = seq_along(levels(df$STRAIN)),
+    labels = levels(df$STRAIN),
+    expand = c(0.01, 0)
+  ) +
+  labs(x = "Physical position (Mb)", y = "STRAIN") +
+  theme_minimal() +
+  theme(panel.grid = element_blank(),
+        legend.position = "none",
+        axis.text.y = element_blank())
+
 
 #df for ggplot
 df <- as.data.frame(hm) 
@@ -138,18 +225,24 @@ ggplot(df) +
   #   name = "IDY"
   # ) +
   scale_x_continuous(
-    labels = label_number(scale = 1e-6, suffix = " Mb")
+    labels = label_number(scale = 1e-6, suffix = " Mb"),
+    expand = c(0.01, 0)
   ) +
   scale_y_continuous(
     breaks = seq_along(levels(df$STRAIN)),
     labels = levels(df$STRAIN),
-    expand = c(0.01, 0.01)
+    expand = c(0.01, 0)
   ) +
-  labs(x = "Reference position", y = "STRAIN") +
+  labs(x = "Physical position (Mb)", y = "STRAIN") +
   theme_minimal() +
-  theme(panel.grid = element_blank(),legend.position = "none")
+  theme(panel.grid = element_blank(),
+        legend.position = "none",
+        axis.text.y = element_blank())
 
 #other diagnostic plots
-ggplot() + geom_segment(data=hm %>%dplyr::filter(CHROM=="I"),aes(y=E2 ,yend=S2,x=ref_start,xend=ref_end,color=HIFI))
-ggplot() + geom_segment(data=test,aes(y=S2/1e6 ,yend=E2/1e6,x=ref_start/1e6,xend=ref_end/1e6,color=HIFI)) +xlim(0,5)
+cowplot::plot_grid(
+ggplot() + geom_segment(data=hm %>%dplyr::filter(CHROM=="I" & STRAIN=="QG4097"),aes(y=S2,yend=E2,x=ref_start,xend=ref_end,color=HIFI))+ylim(0,5e6),
+ggplot() + geom_segment(data=transformed_coords %>%dplyr::filter(REF=="I" & STRAIN=="QG4097"),aes(y=S2,yend=E2,x=S1,xend=E1,color=IDY))+ylim(0,5e6),nrow=2)
 
+
+ggplot() + geom_rect(data=transformed_coords %>%dplyr::filter(REF=="I" & STRAIN=="QG4097"),aes(xmin=S1/1e6,xmax=E1/1e6,ymin=IDY+0.1,ymax=IDY-0.1,fill=HIFI))
