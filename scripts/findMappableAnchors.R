@@ -61,6 +61,9 @@ transformed_coords_hidy <- transformed_coords %>%
   dplyr::filter(L1 >5e3 & L2 > 5e3) %>%
   dplyr::filter(!(STRAIN %in% nigonis))
 
+transformed_coords_anyidy <- transformed_coords %>% 
+  dplyr::filter(L1 >1e3 & L2 > 1e3) %>%
+  dplyr::filter(!(STRAIN %in% nigonis))
 
 # transformed_coords_hidy %>%
 #   distinct(HIFI, LENQ) %>%
@@ -136,7 +139,7 @@ dt[, `:=`(
 )]
 
 # keep S2/E2 and HIFI so they survive into ov
-dt <- dt[, .(CHROM, STRAIN, IDY, ref_start, ref_end, HIFI, S2, E2,LENQ)]
+dt <- dt[, .(CHROM, STRAIN, IDY, ref_start, ref_end, HIFI, S2, E2,LENQ,L2)]
 
 #genomic bins to data table
 bins <- as.data.table(reference_bins)
@@ -175,6 +178,50 @@ om_freq <- as.data.frame(om) %>%
   dplyr::group_by(CHROM,bin_start,bin_end) %>%
   dplyr::mutate(freq=(n()/nstr)*100) %>%
   dplyr::ungroup()
+
+
+#we repeat steps for anyidy
+#intervals to data table
+dt_anyidy<- as.data.table(transformed_coords_anyidy)
+dt_anyidy[, CHROM := REF]
+
+#we don't assume orientation of reference contig
+dt_anyidy[, `:=`(
+  ref_start = pmin(S1, E1),
+  ref_end   = pmax(S1, E1)
+)]
+
+# keep S2/E2 and HIFI so they survive into ov
+dt_anyidy <- dt_anyidy[, .(CHROM, STRAIN, IDY, ref_start, ref_end, HIFI, S2, E2,LENQ,L2)]
+setkey(dt_anyidy, CHROM, ref_start, ref_end)
+
+#find overlaps
+ov_anyidy <- foverlaps(
+  x = dt_anyidy,
+  y = bins,
+  by.x = c("CHROM", "ref_start", "ref_end"),
+  by.y = c("CHROM", "bin_start", "bin_end"),
+  type = "any",
+  nomatch = 0L
+)
+
+#set midpoint
+ov_anyidy[, bin_mid := (bin_start + bin_end) / 2]
+
+# alignment length on the WI genome 
+ov_anyidy[, aln_len := abs(E2 - S2)]
+
+# sort so the best candidate is first within each bin
+setorder(ov_anyidy, CHROM, STRAIN, bin_start, -aln_len,-IDY)
+
+# keep one row per bin (drops remaining ties as duplicates)
+#we then explore data at the alignment level (rather than bin level)
+om_anyidy <- ov_anyidy[, .SD[1], by = .(CHROM, STRAIN, bin_start, bin_end, bin_mid)] 
+om_anyidy_freq <- as.data.frame(om_anyidy) %>%
+  dplyr::group_by(CHROM,bin_start,bin_end) %>%
+  dplyr::mutate(freq=(n()/nstr)*100) %>%
+  dplyr::ungroup()
+
 
 hm<- om %>% 
   dplyr::select(CHROM,STRAIN,IDY,ref_start,ref_end,HIFI,S2,E2,aln_len,LENQ) %>%
@@ -493,7 +540,7 @@ if (offset_mode=="bidirectional") {
     dplyr::ungroup() %>%
     dplyr::select(-dist_key, -pref_key) 
   
-  anchor_bound <- as.data.frame(om_freq) %>%
+  anchor_bound <- as.data.frame(om_anyidy_freq) %>%
     dplyr::filter(CHROM==hap_chrom) %>%
     dplyr::filter(bin_start>=min(anchors$bin_start) & bin_end <= max(anchors$bin_end))
   
@@ -512,7 +559,7 @@ if (offset_mode=="bidirectional") {
       dplyr::ungroup() %>%
       dplyr::select(-dist_key, -pref_key)
     
-    anchor_bound <- as.data.frame(om_freq) %>%
+    anchor_bound <- as.data.frame(om_anyidy_freq) %>%
       dplyr::filter(CHROM==hap_chrom) %>%
       dplyr::filter(bin_start>=min(anchors$bin_start) & bin_end <= max(anchors$bin_end))
 
@@ -618,7 +665,7 @@ if (nrow(anchors)<2) {
   #pull all information within selected anchors
   #drop strains
   #overwrite anchor_bound
-  anchor_bound <- as.data.frame(om_freq) %>%
+  anchor_bound <- as.data.frame(om_anyidy_freq) %>%
     dplyr::filter(CHROM==hap_chrom & !(STRAIN %in% dropped_strains)) %>%
     dplyr::filter(bin_start>=best_pair$start_bin_start[[1]] & bin_end <= best_pair$end_bin_end[[1]])
 } else if (nrow(anchors)>2) {
@@ -627,7 +674,7 @@ if (nrow(anchors)<2) {
 
 
 anchor_positions <- anchors %>%
-  summarise(
+  dplyr::summarise(
     xmin = min(bin_start),
     xmax = max(bin_end)
   ) %>%
@@ -678,8 +725,6 @@ cowplot::plot_grid(gene_dirs2+coord_cartesian(xlim = c(2.95e6, 3.1e6)),
                      geom_vline(xintercept = anchor_positions$x, linetype = "dashed",color="red") ,
                    nrow=2,align = "v",axis = "lr",rel_heights = c(0.1,1))
 
-
-
 cowplot::plot_grid(gene_dirs2+coord_cartesian(xlim = c(min(anchor_positions$x), max(anchor_positions$x))),
                    target_aln_plt+coord_cartesian(xlim = c(min(anchor_positions$x), max(anchor_positions$x)))+
                      geom_vline(xintercept = hap_start, linetype = "dashed") +
@@ -701,12 +746,33 @@ anchor_bound_rle <- anchor_bound %>%
                    hifi_start=min(S2,E2),
                    hifi_end=max(S2,E2),
                    LENQ=first(LENQ),
+                   L2=sum(unique(L2)),
                    STRAIN=first(STRAIN),
                    .groups = "drop") %>%
   dplyr::ungroup() %>%
   dplyr::arrange(STRAIN,ref_start)
 
-
+# anchor_bound_rle <- anchor_bound %>%
+#   dplyr::group_by(STRAIN,HIFI) %>%
+#   dplyr::mutate(meta_start=min(ref_start)) %>%
+#   dplyr::ungroup() %>%
+#   dplyr::arrange(STRAIN,meta_start,bin_start) %>%
+#   dplyr::group_by(STRAIN) %>%                       # or group_by(CHROM, STRAIN)
+#   dplyr::mutate(hifi_run = rleid(HIFI)) %>%         # 1,2,3... whenever HIFI changes
+#   dplyr::ungroup() %>%
+#   dplyr::group_by(STRAIN,hifi_run) %>%
+#   dplyr::summarise(ref_start=min(bin_start),
+#                    ref_end=max(bin_end),
+#                    CHROM=first(CHROM),
+#                    HIFI=first(HIFI),
+#                    hifi_start=min(S2,E2),
+#                    hifi_end=max(S2,E2),
+#                    LENQ=first(LENQ),
+#                    L2=sum(L2),
+#                    STRAIN=first(STRAIN),
+#                    .groups = "drop") %>%
+#   dplyr::ungroup() %>%
+#   dplyr::arrange(STRAIN,ref_start)
 
 
 
@@ -717,7 +783,7 @@ rle_df <- anchor_bound_rle %>%
   dplyr::ungroup() %>%
   dplyr::group_by(STRAIN) %>%
   dplyr::mutate(
-    y = dense_rank(hifi_first)   # 1..K unique HIFI per strain
+    y = hifi_run   # 1..K unique HIFI per strain
   ) %>%
   dplyr::ungroup()
 
@@ -725,12 +791,10 @@ strain_levels <- rle_df %>%
   dplyr::group_by(STRAIN) %>%
   dplyr::summarise(n_lanes = max(y), .groups = "drop") %>%
   dplyr::arrange(desc(n_lanes)) %>%
-  dplyr::pull(STRAIN)
+  dplyr::pull(STRAIN) 
 
 rle_df <- rle_df %>%
-  dplyr::mutate(
-    STRAIN = factor(STRAIN, levels = strain_levels)
-  )
+  dplyr::mutate(STRAIN = factor(STRAIN, levels = strain_levels))
 
 rle_plt <- ggplot(rle_df) +
   geom_rect(aes(
@@ -758,12 +822,315 @@ rle_plt <- ggplot(rle_df) +
     axis.title.y=element_blank(),
     strip.text.y = element_text(angle = 0),
     strip.background = element_blank(),
-    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.5),
+    panel.border = element_blank(),
     legend.position = "none"
   ) +
   coord_cartesian(xlim = c(hap_start, hap_end))
 rle_plt
 
+
+# ctg_alignable <- transformed_coords %>%
+#   dplyr::group_by(STRAIN, HIFI) %>%
+#   dplyr::summarise(alignable_bases=sum(L2),
+#                    total_bases=first(LENQ),
+#                    HIFI=first(HIFI),
+#                    STRAIN=first(STRAIN),.groups = "drop") %>%
+#   dplyr::mutate(alignable_pct=alignable_bases/total_bases)
+
+
+# 
+# rle_metrics <- rle_df %>%
+#   dplyr::group_by(STRAIN) %>%
+#   dplyr::mutate(
+#     y_max = max(y, na.rm = TRUE),
+#     
+#     # special case: fully colinear (single lane)
+#     is_colinear = (y_max == 1L),
+#     
+#     # orientation-safe contig coords
+#     hifi_lo = pmin(hifi_start, hifi_end, na.rm = TRUE),
+#     hifi_hi = pmax(hifi_start, hifi_end, na.rm = TRUE),
+#     
+#     is_terminal = !is_colinear & (y == 1L | y == y_max),
+#     is_internal = !is_colinear & (y > 1L & y < y_max),
+#     
+#     # distances to contig ends
+#     dist_to_left  = hifi_lo - 1,
+#     dist_to_right = LENQ - hifi_hi,
+#     
+#     end_min_dist = if_else(
+#       is_terminal,
+#       pmin(dist_to_left, dist_to_right, na.rm = TRUE),
+#       NA_real_
+#     ),
+#     
+#     aligned_span = abs(hifi_end - hifi_start),
+#     
+#     internal_prop = if_else(
+#       is_internal & (LENQ > 1),
+#       aligned_span / (LENQ - 1),
+#       NA_real_
+#     )
+#   ) %>%
+#   dplyr::ungroup() #%>%
+#   # dplyr::left_join(ctg_alignable, by=c("STRAIN","HIFI")) %>%
+#   # dplyr::mutate(align_ratio = aligned_span/alignable_bases)
+rle_term_groups <- rle_df %>%
+  dplyr::group_by(STRAIN) %>%
+  dplyr::mutate(
+    y_max = max(y, na.rm = TRUE),
+    is_terminal_row = (y == 1L | y == y_max)
+  ) %>%
+  dplyr::ungroup() %>%
+  dplyr::group_by(STRAIN, HIFI) %>%
+  dplyr::mutate(
+    is_terminal_contig = any(is_terminal_row, na.rm = TRUE)
+  ) %>%
+  dplyr::ungroup()
+
+nonterminal_summary <- rle_term_groups %>%
+  dplyr::filter(!is_terminal_contig) %>%
+  dplyr::group_by(STRAIN, HIFI) %>%
+  dplyr::summarise(
+    CHROM=first(CHROM),
+    L2_sum = sum(L2, na.rm = TRUE),
+    LENQ   = first(LENQ),
+    L2_per_LENQ = L2_sum / LENQ,
+    n_rows = n(),
+    .groups = "drop"
+  ) 
+
+ctg_alignable <- om_anyidy %>%
+  dplyr::group_by(STRAIN, HIFI) %>%
+  dplyr::summarise(alignable_bases=sum(unique(L2)),
+                   total_bases=first(LENQ),
+                   HIFI=first(HIFI),
+                   STRAIN=first(STRAIN),.groups = "drop") %>%
+  dplyr::mutate(alignable_pct=alignable_bases/total_bases)
+
+rle_term_groups_wintprop <- rle_term_groups %>%
+  dplyr::left_join(nonterminal_summary %>% dplyr::select(STRAIN,HIFI,L2_per_LENQ),by=c("STRAIN","HIFI"))%>%
+  dplyr::left_join(ctg_alignable %>% dplyr::select(STRAIN,HIFI,alignable_bases,alignable_pct),by=c("STRAIN","HIFI")) 
+
+
+rle_scatter <-  ggplot() + 
+  geom_point(data=rle_term_groups_wintprop %>% dplyr::filter(is_terminal_contig==F),aes(y=L2_per_LENQ/alignable_pct,x=L2,color=STRAIN)) +
+  ylab("Percent contig aligned to genome / Percent contig aligned to region")
+  
+bad_groups <- rle_term_groups_wintprop %>%
+  dplyr::filter(L2_per_LENQ / alignable_pct < 0.75) %>%
+  dplyr::distinct(STRAIN, HIFI)
+
+rle_df_filtered <- rle_df %>%
+  dplyr::anti_join(bad_groups, by = c("STRAIN", "HIFI")) %>%
+  dplyr::mutate(
+    hifi_lo = pmin(hifi_start, hifi_end, na.rm = TRUE),
+    hifi_hi = pmax(hifi_start, hifi_end, na.rm = TRUE)
+  ) %>%
+  dplyr::arrange(STRAIN, ref_start) %>%
+  dplyr::group_by(STRAIN) %>%
+  dplyr::mutate(hifi_run = data.table::rleid(HIFI)) %>%
+  dplyr::ungroup() %>%
+  dplyr::group_by(STRAIN, hifi_run) %>%
+  dplyr::summarise(
+    ref_start = min(ref_start, na.rm = TRUE),
+    ref_end   = max(ref_end,   na.rm = TRUE),
+    CHROM     = dplyr::first(CHROM),
+    HIFI      = dplyr::first(HIFI),
+    hifi_start = min(hifi_lo, na.rm = TRUE),
+    hifi_end   = max(hifi_hi, na.rm = TRUE),
+    LENQ      = dplyr::first(LENQ),
+    L2        = sum(unique(L2), na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  dplyr::arrange(STRAIN, ref_start)
+
+strain_levels <- rle_df_filtered %>%
+  dplyr::group_by(STRAIN) %>%
+  dplyr::summarise(n_lanes = max(hifi_run), .groups = "drop") %>%
+  dplyr::arrange(desc(n_lanes)) %>%
+  dplyr::pull(STRAIN) 
+
+rle_df_filtered <- rle_df_filtered %>%
+  dplyr::mutate(STRAIN = factor(STRAIN, levels = strain_levels))
+
+rle_plt <- ggplot(rle_df_filtered) +
+  geom_rect(aes(
+    xmin = ref_start,
+    xmax = ref_end,
+    ymin = hifi_run - 0.45,
+    ymax = hifi_run + 0.45,
+    fill = HIFI
+  )) +
+  facet_grid(STRAIN ~ CHROM, scales = "free_y", space = "free_y") +
+  scale_x_continuous(
+    labels = label_number(scale = 1e-6, suffix = " Mb"),
+    expand = c(0.01, 0)
+  ) +
+  scale_y_continuous(
+    breaks = function(lims) seq(ceiling(lims[1]), floor(lims[2])),
+    expand = c(0.01, 0)
+  ) +
+  labs(x = "Physical position (Mb)", y = "HIFI lane") +
+  theme_classic() +
+  theme(
+    panel.grid = element_blank(),
+    axis.text.y=element_blank(),
+    axis.ticks.y=element_blank(),
+    axis.title.y=element_blank(),
+    strip.text.y = element_text(angle = 0),
+    strip.background = element_blank(),
+    panel.border = element_blank(),
+    legend.position = "none"
+  ) +
+  coord_cartesian(xlim = c(hap_start, hap_end))
+rle_plt
+
+
+rle_plt2 <- ggplot(rle_term_groups_wintprop %>% dplyr::filter(is_terminal_contig==F,STRAIN=="BRC20075")) +
+  geom_rect(aes(
+    xmin = ref_start,
+    xmax = ref_end,
+    ymin = L2_per_LENQ - 0.1,
+    ymax = L2_per_LENQ + 0.1,
+    fill = HIFI
+  )) +
+  facet_grid(STRAIN ~ CHROM) +
+  scale_x_continuous(
+    labels = label_number(scale = 1e-6, suffix = " Mb"),
+    expand = c(0.01, 0)
+  ) +
+  scale_y_continuous(
+    expand = c(0.01, 0)
+  ) +
+  labs(x = "Physical position (Mb)", y = "Percent contig aligned to genome / Percent contig aligned to region") +
+  theme_classic() +
+  theme(
+    panel.grid = element_blank(),
+    strip.text.y = element_text(angle = 0),
+    strip.background = element_blank(),
+    panel.border = element_blank(),
+    legend.position = "none"
+  )+
+  coord_cartesian(xlim = c(off_start, off_end))
+
+
+
+
+rle_metrics <- rle_df %>%
+  dplyr::group_by(STRAIN) %>%
+  dplyr::mutate(
+    y_max = max(y, na.rm = TRUE),
+    is_colinear = (y_max == 1L)
+  ) %>%
+  dplyr::ungroup() %>%
+  dplyr::mutate(
+    row_span = abs(hifi_end - hifi_start),
+    hifi_at_ref_start = dplyr::if_else(hifi_start <= hifi_end, hifi_start, hifi_end),
+    hifi_at_ref_end   = dplyr::if_else(hifi_start <= hifi_end, hifi_end,   hifi_start)
+  ) %>%
+  dplyr::group_by(STRAIN, HIFI) %>%
+  dplyr::mutate(
+    aligned_span = sum(row_span, na.rm = TRUE),
+    
+    # internal-most alignments across the whole contig
+    most_internal_left_pos  = hifi_at_ref_start[which.min(ref_start)],
+    most_internal_right_pos = hifi_at_ref_end[which.max(ref_end)]
+  ) %>%
+  dplyr::ungroup() %>%
+  dplyr::group_by(STRAIN) %>%
+  dplyr::mutate(
+    is_terminal = !is_colinear & (y == 1L | y == y_max),
+    is_internal = !is_colinear & (y > 1L & y < y_max),
+    
+    terminal_boundary_pos = dplyr::case_when(
+      is_terminal & y == 1L    ~ most_internal_right_pos,  # interior-facing boundary for left terminal
+      is_terminal & y == y_max ~ most_internal_left_pos,   # interior-facing boundary for right terminal
+      TRUE ~ NA_real_
+    ),
+    
+    end_min_dist = dplyr::if_else(
+      is_terminal,
+      pmin(terminal_boundary_pos - 1, LENQ - terminal_boundary_pos, na.rm = TRUE),
+      NA_real_
+    ),
+    
+    internal_prop = dplyr::if_else(
+      is_internal & (LENQ > 1),
+      aligned_span / (LENQ - 1),
+      NA_real_
+    )
+  ) %>%
+  dplyr::ungroup()
+internal_rects <- rle_metrics %>%
+  dplyr::filter(!is_colinear, !is.na(internal_prop)) %>%
+  dplyr::mutate(metric = internal_prop)
+
+p_internal <- ggplot(internal_rects %>% dplyr::filter(STRAIN=="BRC20075")) +
+  geom_rect(aes(
+    xmin = ref_start,
+    xmax = ref_end,
+    ymin = metric-0.01,
+    ymax = metric+0.01,
+    fill=HIFI
+  ), alpha = 0.9) +
+  facet_wrap(~STRAIN) +
+  scale_x_continuous(
+    labels = label_number(scale = 1e-6, suffix = " Mb"),
+    expand = c(0.01, 0)
+  ) +
+  scale_y_continuous(
+    expand = c(0.01, 0)
+  ) +
+  labs(x = "Physical position (Mb)", y = "Difference in proportion aligned") +
+  theme_classic() +
+  theme(
+    panel.grid = element_blank(),
+    strip.text.y = element_text(angle = 0),
+    strip.background = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.5),
+    legend.position = "none"
+  ) +
+  coord_cartesian(xlim = c(off_start, off_end)) +
+  geom_vline(xintercept = anchor_positions$x, linetype = "dashed",color="red")
+p_internal
+
+endpoint_rects <- rle_metrics %>%
+  dplyr::filter(!is_colinear, is_terminal, !is.na(end_min_dist)) %>%
+  dplyr::mutate(metric_kb = end_min_dist / 1e3)
+
+p_endpoint <- ggplot() +
+  geom_point(data=endpoint_rects %>% dplyr::filter(hifi_run==1)%>% dplyr::mutate(side="L"),aes(
+    x = ref_end,
+    y= metric_kb,
+    color=side
+  ), alpha = 0.9) +
+  geom_point(data=endpoint_rects %>% dplyr::filter(hifi_run!=1) %>% dplyr::mutate(side="R"),aes(
+    x = ref_end,
+    y= metric_kb,
+    color=side
+  ), alpha = 0.9) +
+  facet_grid(STRAIN ~ CHROM) +
+  scale_x_continuous(
+    labels = label_number(scale = 1e-6, suffix = " Mb"),
+    expand = c(0.01, 0)
+  ) +
+  scale_y_continuous(
+    labels = label_number(suffix = " kb"),
+    expand = c(0.1, 0)
+  ) +
+  labs(x = "Physical position (Mb)", y = "min endpoint dist") +
+  theme_classic() +
+  theme(
+    panel.grid = element_blank(),
+    strip.text.y = element_text(angle = 0),
+    strip.background = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.5),
+    legend.position = "none"
+  ) +
+  coord_cartesian(xlim = c(off_start, off_end))
+
+p_endpoint
 
 
 
@@ -771,21 +1138,22 @@ rle_plt
 
 ggplot() + 
   annotate("rect",xmin = hap_start,xmax = hap_end,ymin = Inf,ymax = -Inf,fill = "grey50",alpha = 0.4)+
-  geom_segment(data=om_noPCG %>%
-                 dplyr::filter(STRAIN %in% c("VX34"))%>%
-                 dplyr::group_by(STRAIN,bin_start,bin_end) %>%
-                 dplyr::ungroup(),aes(x=ref_start,xend=ref_end,y=S2,yend=E2,color=IDY)) +
-  scale_color_gradientn(colours = c("red", "yellow", "green"),
-                        limits = c(95, 100),
-                        oob = scales::squish,
-                        name = "% Identity") +
+  geom_segment(data=transformed_coords_anyidy %>%
+                 dplyr::filter(STRAIN %in% c("JU3202") & REF==hap_chrom)%>%
+                 #dplyr::group_by(STRAIN,bin_start,bin_end) %>%
+                 dplyr::ungroup(),aes(x=S1,xend=E1,y=S2,yend=E2,color=HIFI)) +
+  # scale_color_gradientn(colours = c("red", "yellow", "green"),
+  #                       limits = c(95, 100),
+  #                       oob = scales::squish,
+  #                       name = "% Identity") +
   theme_classic() +
   facet_wrap(~STRAIN,scales = "free_y",nrow=4) +
   coord_cartesian(xlim=c(hap_start,hap_end))+
   scale_x_continuous(expand = c(0.01,0),
                      labels = label_number(scale = 1e-6, suffix = " Mb")) +
   scale_y_continuous(expand = c(0.01,0),
-                     labels = label_number(scale = 1e-6, suffix = " Mb"))+
+                     labels = label_number(scale = 1e-6, suffix = " Mb"),
+                     limits= c(3.6e6,4.7e6))+
   xlab("")+
   ylab("Contig position")
 
@@ -871,106 +1239,3 @@ target %>%
 
 
 
-rle_metrics <- rle_df %>%
-  dplyr::group_by(STRAIN) %>%
-  dplyr::mutate(
-    y_max = max(y, na.rm = TRUE),
-    
-    # special case: fully colinear (single lane)
-    is_colinear = (y_max == 1L),
-    
-    # orientation-safe contig coords
-    hifi_lo = pmin(hifi_start, hifi_end, na.rm = TRUE),
-    hifi_hi = pmax(hifi_start, hifi_end, na.rm = TRUE),
-    
-    is_terminal = !is_colinear & (y == 1L | y == y_max),
-    is_internal = !is_colinear & (y > 1L & y < y_max),
-    
-    # distances to contig ends
-    dist_to_left  = hifi_lo - 1,
-    dist_to_right = LENQ - hifi_hi,
-    
-    end_min_dist = if_else(
-      is_terminal,
-      pmin(dist_to_left, dist_to_right, na.rm = TRUE),
-      NA_real_
-    ),
-    
-    aligned_span = abs(hifi_end - hifi_start),
-    
-    internal_prop = if_else(
-      is_internal & (LENQ > 1),
-      aligned_span / (LENQ - 1),
-      NA_real_
-    )
-  ) %>%
-  dplyr::ungroup()
-
-
-internal_rects <- rle_metrics %>%
-  dplyr::filter(!is_colinear, is_internal, !is.na(internal_prop)) %>%
-  dplyr::mutate(metric = internal_prop)
-
-p_internal <- ggplot(internal_rects) +
-  geom_rect(aes(
-    xmin = ref_start,
-    xmax = ref_end,
-    ymin = metric-0.01,
-    ymax = metric+0.01
-  ), alpha = 0.9) +
-  facet_grid(STRAIN ~ CHROM, scales = "free_x", space = "free_x") +
-  scale_x_continuous(
-    labels = label_number(scale = 1e-6, suffix = " Mb"),
-    expand = c(0.01, 0)
-  ) +
-  scale_y_continuous(
-    limits = c(0, 1.01),
-    expand = c(0.01, 0)
-  ) +
-  labs(x = "Physical position (Mb)", y = "Difference in proportion aligned") +
-  theme_classic() +
-  theme(
-    panel.grid = element_blank(),
-    strip.text.y = element_text(angle = 0),
-    strip.background = element_blank(),
-    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.5),
-    legend.position = "none"
-  ) +
-  coord_cartesian(xlim = c(hap_start, hap_end))
-
-endpoint_rects <- rle_metrics %>%
-  dplyr::filter(!is_colinear, is_terminal, !is.na(end_min_dist)) %>%
-  dplyr::mutate(metric_kb = end_min_dist / 1e3)
-
-p_endpoint <- ggplot() +
-  geom_point(data=endpoint_rects %>% dplyr::filter(hifi_run==1)%>% dplyr::mutate(side="L"),aes(
-    x = ref_end,
-    y= metric_kb,
-    color=side
-  ), alpha = 0.9) +
-  geom_point(data=endpoint_rects %>% dplyr::filter(hifi_run!=1) %>% dplyr::mutate(side="R"),aes(
-    x = ref_end,
-    y= metric_kb,
-    color=side
-  ), alpha = 0.9) +
-  facet_grid(STRAIN ~ CHROM) +
-  scale_x_continuous(
-    labels = label_number(scale = 1e-6, suffix = " Mb"),
-    expand = c(0.01, 0)
-  ) +
-  scale_y_continuous(
-    labels = label_number(suffix = " kb"),
-    expand = c(0.1, 0)
-  ) +
-  labs(x = "Physical position (Mb)", y = "min endpoint dist") +
-  theme_classic() +
-  theme(
-    panel.grid = element_blank(),
-    strip.text.y = element_text(angle = 0),
-    strip.background = element_blank(),
-    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.5),
-    legend.position = "none"
-  ) +
-  coord_cartesian(xlim = c(off_start, off_end))
-
-p_endpoint
