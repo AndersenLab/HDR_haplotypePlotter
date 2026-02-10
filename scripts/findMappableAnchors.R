@@ -21,15 +21,22 @@ library(scales)
 #appropriately sized test data will be made available once working prod version 1 is finished
 #################
 
+#list of nigoni strains included in orthofinder
+#this is a quirk of my input data
+#mainly included for exploratory purposes, they are later omitted from the plots due to lack of homology in chromosomal arms between both C.b. and C.n.
+#This will change in the future, once the mapping and anchoring logic and sample selection is refined
+nigonis <- c("JU1422","ECA2852","ECA2857","EG5268","JU1418","JU2617","JU1419","JU2484","JU4356","NIC2143","NIC2150","NIC2152","VSL2202","VX153","YR106","ZF1220")
+dropped_genomes <- c("AF16","JU1422","ECA3733","MY681","ECA276")
 #read all pairwise genome coordinate comparisons
 transformed_coords <- readr::read_tsv("../working_data/CBCN_nucmer_db_20250603.tsv",col_names = F) 
 colnames(transformed_coords) <- c("S1","E1","S2","E2","L1","L2","IDY","LENR","LENQ","REF","HIFI","STRAIN")
-transformed_coords <- transformed_coords %>% dplyr::filter(!STRAIN=="AF16" & !STRAIN=="JU1422")
+transformed_coords <- transformed_coords %>% dplyr::filter(!(STRAIN %in% dropped_genomes) & !(STRAIN %in% nigonis))
 
 #read concatentated gene models of every genome (L3 features are removed)
 gffCat <- readr::read_tsv("../working_data/CBCN_L1L2_master.tsv", col_names = F)
 colnames(gffCat) <- c("seqid","source","type","start","end","score","strand","phase","attributes","STRAIN")
-gffCat <- gffCat %>% dplyr::filter(!STRAIN=="AF16.WBPS19" & !STRAIN=="JU1422.WBPS19") %>% dplyr::mutate(STRAIN=ifelse(STRAIN=="QX1410.curated","QX1410",STRAIN))
+gffCat <- gffCat %>% dplyr::filter(!STRAIN=="AF16.WBPS19" & !STRAIN=="JU1422.WBPS19" & !(STRAIN %in% dropped_genomes) & !(STRAIN %in% nigonis)) %>% 
+  dplyr::mutate(STRAIN=ifelse(STRAIN=="QX1410.curated","QX1410",STRAIN))
 
 #read ortholog relationships among gene models
 orthos <- readr::read_tsv("../working_data/CBCN_orthogroups.tsv") %>% dplyr::rename(QX1410=QX1410.curated.longest.protein)
@@ -37,16 +44,8 @@ strainCol <- colnames(orthos)
 strainCol_c1 <- gsub(".braker.longest.protein","",strainCol)
 strainCol_c2 <- gsub(".longest.protein","",strainCol_c1)
 colnames(orthos) <- strainCol_c2
-orthos <- orthos %>% dplyr::select(-AF16.WBPS19,-JU1422.WBPS19) #other reference genomes (AF16, C. briggsae; JU1422, C. nigoni) can be included by dropping this line
-#orthos <- orthos %>%dplyr::select(Orthogroup,CB4856,N2)
-#strainCol_c2 <-colnames(orthos)
-
-#list of nigoni strains included in orthofinder
-#this is a quirk of my input data
-#mainly included for exploratory purposes, they are later omitted from the plots due to lack of homology in chromosomal arms between both C.b. and C.n.
-#This will change in the future, once the mapping and anchoring logic and sample selection is refined
-nigonis <- c("JU1422","ECA2852","ECA2857","EG5268","JU1418","JU2617","JU1419","JU2484","JU4356","NIC2143","NIC2150","NIC2152","VSL2202","VX153","YR106","ZF1220")
-#refs <- c("MY681","JU3207","JU2536")
+orthos <- orthos %>% dplyr::select(-AF16.WBPS19,-JU1422.WBPS19,-any_of(nigonis),-any_of(dropped_genomes)) #other reference genomes (AF16, C. briggsae; JU1422, C. nigoni) can be included by dropping this line
+strainCol_c2 <- setdiff(colnames(orthos), "Orthogroup") 
 
 reference_bins <- readr::read_tsv("../working_data/QX1410_genomic_windows.1kb.bed",col_names = c("CHROM","START","END"))
 
@@ -307,9 +306,9 @@ ggplot(df%>% dplyr::filter(CHROM=="V")) +
 
 #target region position
 #input args
-hap_start = 15e6
-hap_end = 16e6
-hap_chrom = "V"
+hap_start = 1e6
+hap_end = 3e6
+hap_chrom = "I"
 
 #offset parameter (how far away from your boundaries are you willing to expand to search for mappable anchors?)
 #will be in args
@@ -542,28 +541,59 @@ if (offset_mode=="bidirectional") {
     dplyr::select(-dist_key, -pref_key) 
   
   anchor_bound <- as.data.frame(om_anyidy_freq) %>%
-    dplyr::filter(CHROM==hap_chrom) %>%
-    dplyr::filter(bin_start>=min(anchors$bin_start) & bin_end <= max(anchors$bin_end)) %>%
+    dplyr::filter(CHROM == hap_chrom) %>%
+    dplyr::filter(bin_start >= min(anchors$bin_start) & bin_end <= max(anchors$bin_end)) %>%
     dplyr::group_by(STRAIN) %>%
-    dplyr::mutate(bound_mark=ifelse(ref_start == min(ref_start),"ADJ_ST",
-                                    ifelse(ref_end == max(ref_end),"ADJ_EN","NADJ")),
-                  minmax_bin=ifelse(ref_start == min(ref_start),min(bin_start),
-                                    ifelse(ref_end == max(ref_end),max(bin_end),NA))) %>%
+    dplyr::mutate(
+      is_st = ref_start == min(ref_start),
+      is_en = ref_end   == max(ref_end),
+      bound_mark = dplyr::case_when(
+        is_st & is_en ~ "ADJ_COL",
+        is_st         ~ "ADJ_ST",
+        is_en         ~ "ADJ_EN",
+        TRUE          ~ "NADJ"
+      ),
+      minmax_bin = dplyr::case_when(
+        is_st ~ min(bin_start),
+        is_en ~ max(bin_end),
+        TRUE  ~ NA_real_
+      )
+    ) %>%
     dplyr::ungroup() %>%
     dplyr::rowwise() %>%
-    dplyr::mutate(ref_corr_dist=ifelse(bound_mark=="ADJ_ST",abs(ref_start-minmax_bin),
-                                       ifelse(bound_mark=="ADJ_EN",abs(ref_end-minmax_bin),0))) %>%
-    dplyr::mutate(hifi_corr_dist=ifelse(!is.na(minmax_bin),ref_corr_dist+((L2-(ref_end-ref_start))/(ref_end-ref_start))*ref_corr_dist,NA)) %>%
-    dplyr::mutate(inv=ifelse(S2>E2,T,F)) %>%
-    dplyr::mutate(adj_ref_start=ifelse(bound_mark=="ADJ_ST",ref_start+ref_corr_dist,ref_start),
-                  adj_ref_end=ifelse(bound_mark=="ADJ_EN",ref_end-ref_corr_dist,ref_end),
-                  adj_hifi_start=ifelse(bound_mark=="ADJ_ST" & inv==F,S2+hifi_corr_dist,
-                                        ifelse(bound_mark=="ADJ_ST" & inv==T,S2-hifi_corr_dist,S2)),
-                  adj_hifi_end=ifelse(bound_mark=="ADJ_EN" & inv==F,E2-hifi_corr_dist,
-                                      ifelse(bound_mark=="ADJ_EN" & inv==T,E2+hifi_corr_dist,E2))) %>%
+    dplyr::mutate(
+      ref_corr_dist = dplyr::case_when(
+        is_st ~ abs(ref_start - minmax_bin),
+        is_en ~ abs(ref_end   - minmax_bin),
+        TRUE  ~ 0
+      ),
+      hifi_corr_dist = ifelse(
+        !is.na(minmax_bin),
+        ref_corr_dist + ((L2 - (ref_end - ref_start)) / (ref_end - ref_start)) * ref_corr_dist,
+        NA_real_
+      ),
+      inv = S2 > E2,
+      
+      # ADJ_COL is included automatically because is_st and is_en are both TRUE
+      adj_ref_start = ifelse(is_st, ref_start + ref_corr_dist, ref_start),
+      adj_ref_end   = ifelse(is_en, ref_end   - ref_corr_dist, ref_end),
+      
+      adj_hifi_start = dplyr::case_when(
+        is_st & !inv ~ S2 + hifi_corr_dist,
+        is_st &  inv ~ S2 - hifi_corr_dist,
+        TRUE         ~ S2
+      ),
+      adj_hifi_end = dplyr::case_when(
+        is_en & !inv ~ E2 - hifi_corr_dist,
+        is_en &  inv ~ E2 + hifi_corr_dist,
+        TRUE         ~ E2
+      )
+    ) %>%
     dplyr::ungroup() %>%
-    dplyr::select(-minmax_bin,-bound_mark,-ref_corr_dist,-hifi_corr_dist,-ref_start,-ref_end,-S2,-E2) %>%
-    dplyr::select(1:6,ref_start=adj_ref_start,ref_end=adj_ref_end,HIFI,S2=adj_hifi_start,E2=adj_hifi_end,LENQ,L2,aln_len,freq,inv)
+    dplyr::select(-minmax_bin, -bound_mark, -ref_corr_dist, -hifi_corr_dist,
+                  -ref_start, -ref_end, -S2, -E2, -is_st, -is_en) %>%
+    dplyr::select(1:6, ref_start = adj_ref_start, ref_end = adj_ref_end,
+                  HIFI, S2 = adj_hifi_start, E2 = adj_hifi_end, LENQ, L2, aln_len, freq, inv)
   
   test<- anchor_bound
     
@@ -775,7 +805,11 @@ gene_dirs2 <- ggplot() +
   coord_cartesian(xlim = c(off_start, off_end)) +
   scale_y_continuous(expand = c(0.01, 0), limits = c(0.5, 3))
 
-om_noPCG_noOverlap_filt <- om_noPCG_noOverlap %>% dplyr::filter(!(STRAIN %in% dropped_strains))
+if(exists("dropped_strains")) {
+  om_noPCG_noOverlap_filt <- om_noPCG_noOverlap %>% dplyr::filter(!(STRAIN %in% dropped_strains))
+  } else {
+    om_noPCG_noOverlap_filt <- om_noPCG_noOverlap
+}
 
 strain_levels <- om_noPCG_noOverlap_filt %>%
   dplyr::group_by(STRAIN) %>%
@@ -791,7 +825,7 @@ om_noPCG_noOverlap_filt <- om_noPCG_noOverlap_filt %>%
 
 target_aln_filt_plt2 <- ggplot() +
   geom_rect(data=ref_tran %>% dplyr::filter(seqid==hap_chrom),aes(xmin=start,xmax=end,ymin=Inf,ymax=-Inf),alpha=0.7)+
-  geom_rect(data=om_noPCG_noOverlap_filt%>% dplyr::filter(CHROM==hap_chrom & !(STRAIN %in% dropped_strains)),
+  geom_rect(data=om_noPCG_noOverlap_filt%>% dplyr::filter(CHROM==hap_chrom),
             aes(xmin = bin_start,
                 xmax = bin_end,
                 ymin = y - 0.45,
@@ -802,8 +836,8 @@ target_aln_filt_plt2 <- ggplot() +
     labels = label_number(scale = 1e-6, suffix = " Mb"),
     expand = c(0.01, 0)) +
   scale_y_continuous(
-    breaks = seq_along(levels((df %>% dplyr::filter(!(STRAIN %in% dropped_strains)))$STRAIN)),
-    labels = levels((df %>% dplyr::filter(!(STRAIN %in% dropped_strains)))$STRAIN),
+    breaks = seq_along(levels(df$STRAIN)),
+    labels = levels(df$STRAIN),
     expand = c(0.01, 0)) +
   labs(x = "Physical position (Mb)", y = "STRAIN") +
   theme_minimal() +
@@ -812,32 +846,53 @@ target_aln_filt_plt2 <- ggplot() +
   coord_cartesian(xlim = c(hap_start,hap_end)) +
   geom_vline(xintercept = c(hap_start,hap_end),linetype='dashed')
 
-cowplot::plot_grid(gene_dirs2+coord_cartesian(xlim = c(hap_start-2.5e4, hap_start+2.5e4)),
+HL <- cowplot::plot_grid(gene_dirs2+coord_cartesian(xlim = c(hap_start-5e4, hap_start+5e4)),
                    target_aln_filt_plt2+
-                     coord_cartesian(xlim = c(hap_start-2.5e4, hap_start+2.5e4)) + 
+                     coord_cartesian(xlim = c(hap_start-5e4, hap_start+5e4)) + 
                      geom_vline(xintercept = hap_start, linetype = "dashed") +
                      geom_vline(xintercept = anchor_positions$x, linetype = "dashed",color="red") ,
                    nrow=2,align = "v",axis = "lr",rel_heights = c(0.1,1))
 
-cowplot::plot_grid(gene_dirs2+coord_cartesian(xlim = c(hap_end-2.5e4, hap_end+2.5e4)),
+HR <- cowplot::plot_grid(gene_dirs2+coord_cartesian(xlim = c(hap_end-5e4, hap_end+5e4)),
                    target_aln_filt_plt2+
-                     coord_cartesian(xlim = c(hap_end-2.5e4, hap_end+2.5e4))+
+                     coord_cartesian(xlim = c(hap_end-5e4, hap_end+5e4))+
                      geom_vline(xintercept = hap_end, linetype = "dashed")+  
                      geom_vline(xintercept = anchor_positions$x, linetype = "dashed",color="red") ,
                    nrow=2,align = "v",axis = "lr",rel_heights = c(0.1,1))
 
-cowplot::plot_grid(gene_dirs2+coord_cartesian(xlim = c(min(anchor_positions$x), max(anchor_positions$x))),
+HLR <- cowplot::plot_grid(HL,HR,nrow=1,align = "h", axis="tb")
+
+HT <- cowplot::plot_grid(gene_dirs2+coord_cartesian(xlim = c(min(anchor_positions$x), max(anchor_positions$x))),
                    target_aln_filt_plt2+coord_cartesian(xlim = c(min(anchor_positions$x), max(anchor_positions$x)))+
                      geom_vline(xintercept = hap_start, linetype = "dashed") +
                      geom_vline(xintercept = anchor_positions$x, linetype = "dashed",color="red"),
                    nrow=2,align = "v",axis = "lr",rel_heights = c(0.1,1))
-
+cowplot::plot_grid(HT,HLR,nrow=2,align="v",axis="lr")
   
+
+
+# keep_bound <- anchor_bound %>%
+#   dplyr::distinct(STRAIN,HIFI,S2,E2,L2) %>%
+#   dplyr::arrange(STRAIN,HIFI,S2) %>%
+#   dplyr::group_by(STRAIN,HIFI) %>%
+#   dplyr::mutate(leadDiff=lead(S2)-E2) %>%
+#   dplyr::mutate(jump=ifelse(leadDiff > 2e5,1,0)) %>%
+#   dplyr::mutate(leadDiff=ifelse(is.na(leadDiff),0,leadDiff)) %>%
+#   dplyr::mutate(run_id = cumsum(c(1, head(jump, -1)))) %>%
+#   dplyr::ungroup() %>%
+#   dplyr::group_by(STRAIN,HIFI,run_id) %>%
+#   dplyr::mutate(gsize=n()) %>%
+#   dplyr::mutate(len=abs(E2-S2)) %>%
+#   dplyr::mutate(sumlen=sum(len)) %>%
+#   dplyr::ungroup() %>%
+#   dplyr::group_by(STRAIN,HIFI) %>%
+#   dplyr::mutate(keep=ifelse(sumlen==max(sumlen),"keep","drop")) %>%
+#   dplyr::ungroup() 
 
 anchor_bound_rle <- anchor_bound %>%
   dplyr::arrange(STRAIN, bin_start) %>%
-  dplyr::group_by(STRAIN) %>%                       # or group_by(CHROM, STRAIN)
-  dplyr::mutate(hifi_run = rleid(HIFI)) %>%         # 1,2,3... whenever HIFI changes
+  dplyr::group_by(STRAIN) %>%                     
+  dplyr::mutate(hifi_run = rleid(HIFI)) %>%         
   dplyr::ungroup() %>%
   dplyr::group_by(STRAIN,hifi_run) %>%
   dplyr::summarise(ref_start=min(bin_start),
@@ -850,32 +905,7 @@ anchor_bound_rle <- anchor_bound %>%
                    L2=sum(unique(L2)),
                    STRAIN=first(STRAIN),
                    .groups = "drop") %>%
-  dplyr::ungroup() %>%
-  dplyr::arrange(STRAIN,ref_start)
-
-# anchor_bound_rle <- anchor_bound %>%
-#   dplyr::group_by(STRAIN,HIFI) %>%
-#   dplyr::mutate(meta_start=min(ref_start)) %>%
-#   dplyr::ungroup() %>%
-#   dplyr::arrange(STRAIN,meta_start,bin_start) %>%
-#   dplyr::group_by(STRAIN) %>%                       # or group_by(CHROM, STRAIN)
-#   dplyr::mutate(hifi_run = rleid(HIFI)) %>%         # 1,2,3... whenever HIFI changes
-#   dplyr::ungroup() %>%
-#   dplyr::group_by(STRAIN,hifi_run) %>%
-#   dplyr::summarise(ref_start=min(bin_start),
-#                    ref_end=max(bin_end),
-#                    CHROM=first(CHROM),
-#                    HIFI=first(HIFI),
-#                    hifi_start=min(S2,E2),
-#                    hifi_end=max(S2,E2),
-#                    LENQ=first(LENQ),
-#                    L2=sum(L2),
-#                    STRAIN=first(STRAIN),
-#                    .groups = "drop") %>%
-#   dplyr::ungroup() %>%
-#   dplyr::arrange(STRAIN,ref_start)
-
-
+  dplyr::ungroup()
 
 rle_df <- anchor_bound_rle %>%
   dplyr::arrange(STRAIN, CHROM, ref_start) %>%
@@ -897,7 +927,7 @@ strain_levels <- rle_df %>%
 rle_df <- rle_df %>%
   dplyr::mutate(STRAIN = factor(STRAIN, levels = strain_levels))
 
-rle_plt <- ggplot(rle_df) +
+rle_plt <- ggplot(rle_df %>% dplyr::filter(STRAIN=="NIC1593")) +
   geom_rect(aes(
     xmin = ref_start,
     xmax = ref_end,
@@ -974,8 +1004,57 @@ bad_groups <- rle_term_groups_wintprop %>%
   dplyr::filter(L2_per_LENQ / alignable_pct < 0.75) %>%
   dplyr::distinct(STRAIN, HIFI)
 
-rle_df_filtered <- rle_df %>%
-  dplyr::anti_join(bad_groups, by = c("STRAIN", "HIFI")) %>%
+
+anchor_bound_filtered <- anchor_bound %>%
+  dplyr::anti_join(bad_groups, by = c("STRAIN", "HIFI")) 
+
+window_size = max(anchors$bin_end) - min(anchors$bin_start) 
+
+drop_bound <- anchor_bound_filtered %>%
+  dplyr::distinct(STRAIN,HIFI,S2,E2,L2) %>%
+  dplyr::mutate(adj_S2=ifelse(S2>E2,E2,S2),adj_E2=ifelse(S2>E2,S2,E2)) %>%
+  dplyr::arrange(STRAIN,HIFI,S2) %>%
+  dplyr::group_by(STRAIN,HIFI) %>%
+  dplyr::mutate(leadDiff=lead(adj_S2)-adj_E2) %>%
+  dplyr::mutate(jump=ifelse(leadDiff > 2e5,1,0)) %>%
+  dplyr::mutate(leadDiff=ifelse(is.na(leadDiff),0,leadDiff)) %>%
+  dplyr::mutate(run_id = cumsum(c(1, head(jump, -1)))) %>%
+  dplyr::ungroup() %>%
+  dplyr::group_by(STRAIN,HIFI,run_id) %>%
+  dplyr::mutate(gsize=n()) %>%
+  dplyr::mutate(len=abs(E2-S2)) %>%
+  dplyr::mutate(sumlen=sum(len)) %>%
+  dplyr::ungroup() %>%
+  dplyr::group_by(STRAIN,HIFI) %>%
+  dplyr::mutate(keep=ifelse(sumlen==max(sumlen),T,F)) %>%
+  dplyr::ungroup() %>% 
+  dplyr::filter(keep==F) %>%
+  dplyr::select(STRAIN,HIFI,S2,E2,keep)
+
+
+anchor_bound_rle_filtered <- anchor_bound_filtered %>%
+  dplyr::left_join(drop_bound, by=c("STRAIN","HIFI","S2","E2")) %>%
+  dplyr::filter(is.na(keep)) %>%
+  dplyr::select(-keep) %>%
+  dplyr::arrange(STRAIN, bin_start) %>%
+  dplyr::group_by(STRAIN) %>%                     
+  dplyr::mutate(hifi_run = rleid(HIFI)) %>%         
+  dplyr::ungroup() %>%
+  dplyr::group_by(STRAIN,hifi_run) %>%
+  dplyr::summarise(ref_start=min(bin_start),
+                   ref_end=max(bin_end),
+                   CHROM=first(CHROM),
+                   HIFI=first(HIFI),
+                   hifi_start=min(S2,E2),
+                   hifi_end=max(S2,E2),
+                   LENQ=first(LENQ),
+                   L2=sum(unique(L2)),
+                   STRAIN=first(STRAIN),
+                   .groups = "drop") %>%
+  dplyr::ungroup()
+
+
+rle_df_filtered <- anchor_bound_rle_filtered %>%
   dplyr::mutate(
     hifi_lo = pmin(hifi_start, hifi_end, na.rm = TRUE),
     hifi_hi = pmax(hifi_start, hifi_end, na.rm = TRUE)
@@ -987,7 +1066,10 @@ rle_df_filtered <- rle_df %>%
   dplyr::group_by(STRAIN) %>%
   dplyr::mutate(group_class=ifelse(hifi_run==1,"TERMINAL_START",ifelse(hifi_run==max(hifi_run),"TERMINAL_END","INTERNAL"))) %>%
   dplyr::ungroup() %>%
-  dplyr::left_join(orientations,by=c("STRAIN","HIFI"))
+  dplyr::left_join(orientations,by=c("STRAIN","HIFI")) 
+
+rle_df_filtered <- rle_df_filtered %>%
+  dplyr::mutate(STRAIN = factor(STRAIN, levels = strain_levels))
 
 rle_df_filtered_summ <- rle_df_filtered %>%
   dplyr::group_by(STRAIN, hifi_run) %>%
@@ -1087,28 +1169,34 @@ terminal_split_summ <- terminal_split%>%
   ) %>%
   dplyr::arrange(STRAIN, ref_start)
 
-df <- rle_df_filtered_summ %>% dplyr::mutate(xmin=-Inf,xmax=Inf) %>% dplyr::filter(STRAIN=="EG6267")
+df <- rle_df_filtered_summ %>% dplyr::mutate(xmin=-Inf,xmax=Inf) %>% dplyr::filter(STRAIN=="NIC1667")
 df2 <- df %>%
-  arrange(STRAIN, hifi_run) %>%
-  group_by(STRAIN) %>%
-  mutate(
+  dplyr::arrange(STRAIN, hifi_run) %>%
+  dplyr::group_by(STRAIN) %>%
+  dplyr::mutate(
     row_max = pmax(hifi_start, hifi_end),
     offset  = lag(cumsum(row_max), default = 0),
     hifi_start = hifi_start + offset,
     hifi_end   = hifi_end   + offset
   ) %>%
-  ungroup() %>%
-  select(-row_max, -offset)
+  dplyr::ungroup() %>%
+  dplyr::select(-row_max, -offset) %>%
+  dplyr::mutate(hifi_end=hifi_end-min(hifi_start)) %>%
+  dplyr::mutate(hifi_start=hifi_start-min(hifi_start)) %>%
+  dplyr::mutate(ref_end=ref_end-min(ref_start)) %>%
+  dplyr::mutate(ref_start=ref_start-min(ref_start))
 
 reord1 <- ggplot() +
   geom_rect(data=df2,aes(xmin=ref_start,xmax=ref_end,ymin=hifi_start,ymax=hifi_end,fill=HIFI),alpha=0.3) +
   geom_segment(data=df2,aes(x=ref_start,xend=ref_end,y=hifi_start,yend=hifi_end,color=HIFI))+
   scale_x_continuous(expand = c(0,0)) +
-  coord_cartesian(xlim=c(min(anchors$bin_start),max(anchors$bin_end)),
+  scale_y_continuous(expand = c(0,0)) +
+  coord_cartesian(xlim=c(min(c(df2$ref_start,df2$ref_end)),max(c(df2$ref_start,df2$ref_end))),
                   ylim=c(min(c(df2$hifi_start,df2$hifi_end)),max(c(df2$hifi_start,df2$hifi_end)))) +
   theme_bw() +
-  xlab("Reference coordinates") +
-  ylab("haplotypePlotter coordinates")
+  xlab("haplotypePlotter reference coordinates") +
+  ylab("haplotypePlotter WI coordinates")  #+
+  #geom_abline(slope=1,intercept = 0,linetype="dashed",color="grey")
 
 
 reord2 <- ggplot() +
@@ -1123,19 +1211,404 @@ reord2 <- ggplot() +
                   ylim=c(min(c(df$hifi_start,df$hifi_end)),max(c(df$hifi_start,df$hifi_end)))) +
   theme_bw() +
   xlab("Reference coordinates") +
-  ylab("WI coordinates")
+  ylab("WI contig coordinates")
 
 cowplot::plot_grid(reord2+theme(legend.position='none'),reord1,ncol=2,rel_widths = c(0.9,1))
 
 internal <- rle_df_filtered %>% 
   dplyr::filter(!grepl("TERMINAL",group_class))
 
-
-
 ### To be continuted
 ref_tran_reg <- ref_tran %>%
-  dplyr::filter((start >= hap_start & start <= hap_end) | (end >= hap_start & end <= hap_end))  %>%
+  dplyr::filter((start >= min(anchors$bin_start) & start <= max(anchors$bin_end)) | (end >= min(anchors$bin_start) & end <= max(anchors$bin_end)))  %>%
   dplyr::filter(seqid==hap_chrom)
 
 HV_genelist <- ref_tran_reg$tranname 
+
+all_orthos_unnest <- orthos %>%
+  dplyr::mutate(QX1410 = strsplit(as.character(QX1410), ",")) %>%
+  tidyr::unnest(QX1410) %>%
+  dplyr::mutate(QX1410=trimws(QX1410)) %>%
+  dplyr::mutate(na_count = rowSums(is.na(.))) %>%
+  dplyr::filter(na_count < length(strainCol_c2) - 2) %>%
+  dplyr::left_join(ref_tran %>% dplyr::select(tranname,seqid,seqname,start,end),by=c("QX1410"="tranname"))  %>%
+  dplyr::select(-na_count)
+
+filtOrthos <- orthos %>%
+  dplyr::filter(grepl(paste(HV_genelist,collapse="|"),QX1410)) %>%
+  dplyr::mutate(QX1410 = strsplit(as.character(QX1410), ",")) %>%
+  tidyr::unnest(QX1410) %>%
+  dplyr::mutate(QX1410=trimws(QX1410)) %>%
+  dplyr::left_join(ref_tran_reg %>% dplyr::select(tranname,seqid,seqname,start,end) %>% dplyr::mutate(og_loc="in_region"),by=c("QX1410"="tranname")) 
+
+inreg_orthos <- filtOrthos %>% dplyr::filter(!is.na(seqid)) 
+outreg_orthos <- filtOrthos %>% dplyr::filter(is.na(seqid)) %>% 
+  dplyr::select(-seqid,-seqname,-start,-end,-og_loc) %>%
+  dplyr::left_join(ref_tran %>% dplyr::select(tranname,seqid,seqname,start,end,refStart,refEnd) %>% 
+                     dplyr::mutate(refChrom=hap_chrom) %>%
+                     dplyr::mutate(og_loc="out_region"),by=c("QX1410"="tranname")) %>%
+  dplyr::filter(seqid==refChrom) %>%
+  dplyr::mutate(start_dist=abs(refStart-end),end_dist=abs(start-refEnd)) %>%
+  dplyr::rowwise() %>%
+  dplyr::mutate(min_dist_bases=min(start_dist,end_dist)) %>%
+  dplyr::ungroup() %>% 
+  dplyr::mutate(updown=ifelse(end < refStart,"upstream","downstream")) %>%
+  dplyr::mutate(status=ifelse(min_dist_bases <2e4,"out_expand","outside"))
+
+# if (nrow(outreg_orthos  %>% dplyr::filter(min_dist_bases < 2e4)) > 0) {
+#   print("WARNING: There is at least one paralog that is within 10 kb of a gene within your defined boundary in QX1410. Your boundary will be automatically expanded to include:")
+#   print(outreg_orthos %>% dplyr::select(seqid,seqname,start,end,QX1410,min_dist_bases) %>% dplyr::filter(min_dist_bases < 2e4))
+# }
+
+HV_boundary <- rle_df_filtered %>%
+  dplyr::group_by(STRAIN,HIFI) %>%
+  dplyr::summarise(
+    boundChrom=first(HIFI),
+    boundStart=min(hifi_start,hifi_end),
+    boundEnd=max(hifi_start,hifi_end),
+    STRAIN=first(STRAIN),
+    hifi_run=first(hifi_run),
+    inv=first(REOR),
+    group_class=first(group_class),
+    LENQ=first(LENQ),
+    CHROM=first(CHROM),
+    refStart=min(ref_start),
+    refEnd=max(ref_end),
+    .groups = "drop"
+  ) %>%
+  dplyr::arrange(STRAIN,hifi_run) %>%
+  dplyr::mutate(alt_boundStart=ifelse(group_class=="INTERNAL",1,boundStart),alt_boundEnd=ifelse(group_class=="INTERNAL",LENQ,boundEnd))
+
+wild_genes <- gffCat %>%
+  dplyr::filter(type=="gene" & !(STRAIN=="QX1410")) %>%
+  dplyr::mutate(attributes=gsub(";","",attributes)) %>% 
+  dplyr::mutate(attributes=gsub("ID=","",attributes)) %>%
+  dplyr::select(attributes,seqid,start,end,strand,STRAIN) %>%
+  dplyr::rename(Name=attributes)
+
+wild_tran <-  gffCat  %>%
+  dplyr::filter(type=="mRNA" & !(STRAIN=="QX1410")) %>%
+  tidyr::separate(attributes,into=c("tranname","Parent"),sep=";Parent=") %>%
+  dplyr::mutate(Parent=gsub(";","",Parent)) %>%
+  dplyr::mutate(tranname=gsub("ID=","",tranname)) %>%
+  dplyr::select(tranname,Parent,STRAIN) %>%
+  dplyr::left_join(wild_genes,by=c("Parent"="Name","STRAIN")) %>%
+  dplyr::left_join(HV_boundary, by = join_by(STRAIN,
+                                             seqid == HIFI,
+                                             start <= boundEnd,
+                                             end   >= boundStart))
+                   
+#generate a lookup table (all_ortho_pairs) which contains all pairwise gene orthologs between REF and WILD
+orthoList <- list()
+orthoList_bound <- list()
+orthoList_raw <- list()
+strainCol_iter <- setdiff(strainCol_c2, "QX1410") 
 ####
+for (i in 1:length(strainCol_iter)) {
+  
+  id=strainCol_iter[i]
+  raw_tmp <- orthos %>%
+    dplyr::select(Orthogroup,strainCol_iter[i],QX1410) %>%
+    dplyr::mutate(str=!!sym(strainCol_iter[i])) %>%
+    dplyr::mutate(str = strsplit(as.character(str), ",")) %>%
+    tidyr::unnest(str) %>%
+    dplyr::mutate(str=trimws(str)) %>%
+    dplyr::filter(!is.na(QX1410)) %>%
+    dplyr::select(-strainCol_iter[i]) %>%
+    dplyr::mutate(STRAIN=strainCol_iter[i]) %>%
+    dplyr::mutate(has_any_ortho=T) %>%
+    dplyr::left_join(wild_tran,by=c("STRAIN","str"="tranname"))
+
+  orthoList_raw[[i]] <- raw_tmp
+  
+  print(paste0("Mapped orthologs for ",i,"/",length(strainCol_iter)," strains."))
+  tmp <- rbind(inreg_orthos %>% dplyr::mutate(status="within") %>% dplyr::select(Orthogroup,strainCol_iter[i],QX1410,seqid,seqname,start,end,og_loc,status),outreg_orthos %>% 
+                 dplyr::select(Orthogroup,strainCol_iter[i],QX1410,seqid,seqname,start,end,og_loc,status)) %>%
+    dplyr::select(Orthogroup,QX1410,strainCol_iter[i],og_loc,status) %>%
+    dplyr::rename(tmpSel=strainCol_iter[i]) %>%
+    dplyr::mutate(newSel = strsplit(as.character(tmpSel), ",")) %>%
+    tidyr::unnest(newSel) %>%
+    dplyr::mutate(newSel=trimws(newSel)) %>%
+    dplyr::select(-tmpSel) %>%
+    dplyr::mutate(STRAIN=strainCol_iter[i]) %>%
+    tidyr::separate(newSel,into=c("Name","tnum"),sep="\\.",remove = F) %>%
+    dplyr::select(Orthogroup,newSel,Name,STRAIN,QX1410,-tnum,og_loc,status) %>%
+    dplyr::rename(tranname=newSel,Parent=Name) %>%
+    dplyr::left_join(wild_tran,by=c("tranname","Parent","STRAIN")) 
+
+  orthoList[[i]] <- tmp
+  
+  boundg <- tmp %>% 
+    dplyr::filter(og_loc=="in_region" | status=="out_expand") %>%
+    dplyr::select(-og_loc,-status) %>%
+    dplyr::filter(seqid==boundChrom) %>%
+    dplyr::mutate(og_loc=ifelse(((start >= boundStart & start <= boundEnd) | (end >= boundStart & end <= boundEnd)),"in_region","out_region")) %>%
+    dplyr::mutate(start_dist=ifelse(og_loc=="out_region",abs(boundStart-end),NA),end_dist=ifelse(og_loc=="out_region",abs(start-boundEnd),NA)) %>%
+    dplyr::rowwise() %>%
+    dplyr::mutate(min_dist_bases=min(start_dist,end_dist)) %>%
+    dplyr::ungroup() %>%
+    dplyr::mutate(status=ifelse(og_loc=="in_region","within",ifelse(min_dist_bases < 10000 & !is.na(min_dist_bases),"out_expand","outside")))
+  check <- boundg %>% dplyr::filter(status=="out_expand")
+  
+  orthoList_bound[[i]] <- boundg %>% 
+    dplyr::select(-start_dist,-end_dist,-min_dist_bases) %>% dplyr::arrange(start)
+}
+
+all_ortho_pairs  <- plyr::ldply(orthoList,data.frame) 
+all_ortho_pairs_raw <- plyr::ldply(orthoList_raw,data.frame) %>% dplyr::select(STRAIN,str,has_any_ortho) %>% dplyr::rename(tranname=str) 
+all_ortho_pairs_bound_pre <-plyr::ldply(orthoList_bound,data.frame) %>% 
+  dplyr::filter(!status=="outside") 
+all_ortho_pairs_bound <- all_ortho_pairs_bound_pre %>%
+  dplyr::arrange(STRAIN,start)
+
+
+ref_AD_pre <- ref_tran_reg %>% dplyr::select(tranname,Parent=seqname,STRAIN,seqid,start,end,strand,alias) %>% dplyr::mutate(inv=F)
+wi_AD_pre <- all_ortho_pairs_bound %>% dplyr::select(tranname,Parent,STRAIN,seqid=boundChrom,start,end,strand,alias=QX1410,inv)
+
+boundGenes <- rbind(ref_AD_pre,wi_AD_pre)
+
+ref_ad <- boundGenes %>% 
+  dplyr::filter(STRAIN=="QX1410") %>%
+  dplyr::mutate(tr_has_any_ortho=ifelse(tranname %in% all_orthos_unnest$QX1410,T,F)) %>%
+  dplyr::mutate(tr_has_bound_ortho=ifelse(tranname %in% all_ortho_pairs_bound$QX1410,T,F)) %>%
+  dplyr::arrange(start) %>%
+  dplyr::group_by(Parent) %>%
+  dplyr::mutate(has_any_ortho = any(tr_has_any_ortho)) %>% 
+  dplyr::mutate(has_bound_ortho = any(tr_has_bound_ortho)) %>%
+  dplyr::select(-tr_has_any_ortho,-tr_has_bound_ortho) %>%
+  dplyr::ungroup()
+
+g_count <- length(unique(ref_ad$Parent))
+
+WI_ad <- boundGenes %>% 
+  dplyr::filter(STRAIN!="QX1410") %>%
+  dplyr::left_join(all_ortho_pairs_raw,by=c("STRAIN","tranname")) %>% 
+  dplyr::arrange(STRAIN,seqid,start) %>%
+  dplyr::mutate(tr_has_any_ortho=ifelse(is.na(has_any_ortho),F,has_any_ortho)) %>%
+  dplyr::left_join(all_ortho_pairs_bound %>% 
+                     dplyr::select(tranname,seqid,STRAIN,QX1410,status) %>% 
+                     dplyr::filter(QX1410 %in% ref_ad$tranname),by=c("STRAIN","seqid","tranname"),relationship="many-to-many") %>%
+  dplyr::mutate(tr_has_bound_ortho=ifelse(!is.na(status),T,F)) %>%
+  dplyr::select(-status,-has_any_ortho) %>% 
+  dplyr::rename(QX_name=QX1410) %>%
+  dplyr::left_join(aliases %>% dplyr::select(-seqname),by=c("QX_name"="tranname")) %>%
+  dplyr::mutate(alias.x=alias.y) %>%
+  dplyr::select(-alias.y,-QX_name) %>%
+  dplyr::rename(alias=alias.x) %>%
+  dplyr::group_by(STRAIN,Parent) %>%
+  dplyr::mutate(has_any_ortho = any(tr_has_any_ortho)) %>% 
+  dplyr::mutate(has_bound_ortho = any(tr_has_bound_ortho)) %>%
+  dplyr::select(-tr_has_any_ortho,-tr_has_bound_ortho) %>%
+  dplyr::ungroup() %>%
+  dplyr::left_join(HV_boundary %>% dplyr::select(-inv),by=c("STRAIN","seqid"="HIFI")) %>%
+  dplyr::group_by(STRAIN) %>%
+  dplyr::mutate(n_gene=n_distinct(tranname)) %>%
+  # dplyr::mutate(start_sort = ifelse(rep(dplyr::first(inv), dplyr::n()), -start, start)) %>%
+  # dplyr::arrange(start_sort, .by_group = TRUE) #%>%
+  # dplyr::mutate(first_gene=dplyr::first(alias)) %>%
+  dplyr::ungroup() %>%
+  # dplyr::group_by(STRAIN) %>%
+  dplyr::arrange(desc(n_gene),STRAIN,seqid,start) %>% 
+  # dplyr::mutate(order_gene = dplyr::first(first_gene),
+  #               order_num = dplyr::first(n_gene)) %>% 
+  # dplyr::ungroup() %>%
+  #dplyr::mutate(STRAIN = factor(STRAIN, levels = rev(desired_strains))) %>% #can be commented out if no order is desired
+  # dplyr::arrange(STRAIN, order_gene, order_num) %>%
+  # dplyr::select(-order_gene, -order_num) %>%
+  #dplyr::mutate(g_diff = abs(n_gene-g_count)) %>%
+  dplyr::mutate(y_pos=rleid(STRAIN))
+
+ref_ad_corr <- ref_ad %>%
+  dplyr::mutate(y_pos=max(WI_ad$y_pos)+1)
+
+
+all_ad <- bind_rows(ref_ad_corr,WI_ad) %>% 
+  dplyr::arrange(y_pos,seqid,start) 
+
+gap <- 500
+
+all_ad_fixed <- all_ad %>%
+  dplyr::group_by(STRAIN, hifi_run) %>%
+  dplyr::mutate(bound_corr = max(end, na.rm = TRUE),
+         start = if_else(inv, abs(start - bound_corr), start),
+         end   = if_else(inv, abs(end   - bound_corr), end)) %>%
+  dplyr::ungroup()
+
+run_offsets <- all_ad_fixed %>%
+  dplyr::group_by(STRAIN, hifi_run) %>%
+  dplyr::summarise(
+    run_min = min(start, na.rm = TRUE),
+    run_max = max(end,   na.rm = TRUE),
+    run_len = run_max - run_min,
+    .groups = "drop"
+  ) %>%
+  dplyr::arrange(STRAIN, hifi_run) %>%
+  dplyr::group_by(STRAIN) %>%
+  dplyr::mutate(run_offset = cumsum(lag(run_len + gap, default = 0))) %>%
+  dplyr::ungroup()
+
+all_ad_shifted <- all_ad_fixed %>%
+  dplyr::left_join(run_offsets, by = c("STRAIN", "hifi_run")) %>%
+  dplyr::mutate(
+    start = start - run_min + run_offset,
+    end   = end   - run_min + run_offset
+  ) %>%
+  dplyr::select(-run_min, -run_max, -run_len, -run_offset) %>%
+  dplyr::arrange(y_pos, hifi_run, seqid, start) %>%
+  dplyr::mutate(col=ifelse(has_any_ortho==T & has_bound_ortho ==T,2,ifelse(has_any_ortho==T,1,0))) 
+
+hlines <- all_ad_shifted %>%
+  dplyr::group_by(STRAIN, hifi_run) %>%
+  dplyr::summarise(
+    y    = first(y_pos),
+    yend = first(y_pos),
+    x    = min(start, na.rm = TRUE),
+    xend = max(end,   na.rm = TRUE),
+    .groups = "drop"
+  )
+
+plot_ad <- all_ad_shifted %>%
+  dplyr::group_by(STRAIN,Parent) %>%
+  dplyr::filter(col==max(col)) %>%
+  dplyr::ungroup() %>%
+  dplyr::distinct(STRAIN,Parent,.keep_all = T) %>%
+  dplyr::mutate(class=ifelse(col==0,"no_known_ortho",ifelse(col==1,"has_distal_ortho","has_local_ortho"))) 
+
+all_hap <- ggplot() +
+  geom_segment(data=hlines,aes(x=x,xend=xend,y=y,yend=yend))+
+  #geom_segment(data=segments,aes(x=WI_x_pos,xend=N2_x_pos,y=WI_y_pos,yend=N2_y_pos,col=col)) +
+  geom_rect(data=plot_ad, aes(xmin=start,xmax=end,ymin=y_pos+0.2,ymax=y_pos-0.2,fill=class),color="black") +
+  theme(legend.title = element_blank(),
+        panel.background = element_blank(),
+        axis.title = element_blank(),
+        #axis.text = element_blank(),
+        axis.title.x = element_blank(),
+        axis.title.y = element_text())+
+        #axis.ticks = element_blank()) +
+  #scale_color_manual(values=c("multi_copy"="black","single_copy"="grey")) +
+  scale_fill_manual(values=c("has_local_ortho"="grey","has_distal_ortho"="black","no_known_ortho"="red","no_known_allelic_CB"="blue")) +
+  scale_x_continuous(expand = c(0.01,0)) +
+  ylab("")
+all_hap
+
+plot_ad_filtered <- plot_ad %>% 
+  dplyr::mutate(alias=ifelse(is.na(alias),"non-ortho",alias)) %>%
+  filter(alias != "non-ortho")
+
+trapeziums <- inner_join(
+  plot_ad_filtered, plot_ad_filtered,
+  by = "alias",
+  suffix = c("_upper", "_lower"),
+  relationship = "many-to-many"
+) %>% 
+  filter(y_pos_upper - y_pos_lower == 1)
+
+trapezium_polys <- trapeziums %>% 
+  dplyr::rowwise() %>%
+  do({
+    # Calculate corrected x coordinates for the upper rectangle
+    x_left_upper <- min(.$start_upper, .$end_upper)
+    x_right_upper <- max(.$start_upper, .$end_upper)
+    
+    # Calculate corrected x coordinates for the lower rectangle
+    x_left_lower <- min(.$start_lower, .$end_lower)
+    x_right_lower <- max(.$start_lower, .$end_lower)
+    
+    data.frame(
+      alias = .$alias,
+      group = paste(.$alias, .$y_pos_upper, sep = "_"),
+      x = c(x_left_upper, x_right_upper, x_right_lower, x_left_lower),
+      y = c(.$y_pos_upper - 0.2,  # bottom edge of the upper rectangle
+            .$y_pos_upper - 0.2,
+            .$y_pos_lower + 0.2,  # top edge of the lower rectangle
+            .$y_pos_lower + 0.2)
+    )
+  }) %>%
+  dplyr::ungroup()
+
+# Extract unique aliases at y_pos max+1 in order of increasing start position
+ordered_aliases <- plot_ad %>%
+  dplyr::filter(y_pos == max(plot_ad$y_pos)) %>%
+  dplyr::arrange(start) %>%
+  dplyr::pull(alias) %>%
+  unique()
+
+# Reorder the factor levels so that the legend follows the ordered aliases
+plot_ad <- plot_ad %>%
+  dplyr::mutate(alias = factor(alias, levels = ordered_aliases))
+
+# Also update any other data frames with alias info, e.g. trapezium_polys:
+trapezium_polys <- trapezium_polys %>%
+  dplyr::mutate(alias = factor(alias, levels = ordered_aliases))
+
+# Shuffle the assignment of colors to the ordered aliases
+set.seed(123)  # for reproducibility
+shuffled_aliases <- sample(ordered_aliases)
+
+# Generate colors using hcl.colors() for the shuffled aliases
+default_colors <- setNames(hcl.colors(length(shuffled_aliases), "Dark 3"), shuffled_aliases)
+
+# But to keep the legend order as ordered_aliases, we re-map these colors back:
+final_colors <- default_colors[ordered_aliases]
+
+# Optionally, if you have the "non-ortho" alias (or any other), add it explicitly:
+final_colors <- c(final_colors, "Unknown gene" = "darkgrey")
+
+
+plot_ad_segments <- plot_ad %>%
+  dplyr::mutate(
+    # Adjust strand logic if inverted
+    strand_logic = case_when(
+      strand == "+" & !inv ~ "+",
+      strand == "-" & !inv ~ "-",
+      strand == "+" & inv  ~ "-",
+      strand == "-" & inv  ~ "+"
+    ),
+    seg_color = ifelse(strand_logic == "+", "black", "red"),
+    
+    x_start = start,
+    x_end   = end,
+    y_seg   = y_pos - 0.25  # just under the geom_rect (geom_rect is y_pos ± 0.2)
+  )
+#apply final_colors in your ggplot scale:
+all_hap_bg <- ggplot() +
+  geom_segment(data = hlines, 
+               aes(x = x, xend = xend, y = y, yend = yend)) +
+  geom_polygon(data = trapezium_polys, 
+               aes(x = x, y = y, group = group, fill = alias)) +
+  geom_rect(data = plot_ad %>% dplyr::mutate(alias=ifelse(is.na(alias),"Unknown gene",as.character(alias))),
+            aes(xmin = start, xmax = end, ymin = y_pos + 0.2, ymax = y_pos - 0.2, fill = alias),color = "black") +
+  #geom_segment(
+  #  data = plot_ad_segments,
+  #  aes(x = x_start, xend = x_end, y = y_seg, yend = y_seg, color = seg_color),
+  #  linewidth = 0.5,
+  #  inherit.aes = FALSE
+  #) + # orientation of the genes can be displayed with this geom_segment() call
+  scale_y_continuous(
+    expand = c(0.01, 0),
+    breaks = hlines$y,
+    labels = hlines$STRAIN
+  ) +
+  scale_x_continuous(expand = c(0.01, 0),labels = function(x) x / 1000) +
+  scale_fill_manual(values = final_colors,
+                    breaks = names(final_colors)) +
+  scale_color_identity()  +
+  #scale_color_manual(values = c("+"="black","-"="red")) +
+  labs(fill="Reference\ngene")+
+  xlab("Physical distance (kb)") +
+  theme(
+    panel.background = element_blank(),
+    axis.title = element_blank(),
+    axis.text.y = element_text(size = 8),  # adjust size as needed
+    axis.ticks.y = element_blank(),
+    axis.line.x = element_line(),
+    axis.title.x = element_text(),
+    legend.position='none'
+    # legend.position = "bottom",
+    # legend.direction = "horizontal",
+    # legend.key.size = unit(0.4, "lines"),
+    # legend.text = element_text(size = 6),
+    # legend.title = element_text(size = 7) # legend can be enabled with these theme() paramters
+  ) +
+  guides(fill = guide_legend(nrow = 6, byrow = TRUE))
+all_hap_bg
